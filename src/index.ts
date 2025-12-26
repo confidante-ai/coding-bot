@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // CLI Implementation
 import "dotenv/config";
+import path from "node:path";
 import app from "./app.js";
 import { CLIClient } from "./lib/agent/agentClient.js";
 import { createWorktree } from "./lib/workflow/worktreeLifecycle.js";
@@ -60,14 +61,15 @@ async function runImplement(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  if (!process.env.REPO_NAME) {
-    console.error("Error: REPO_NAME environment variables must be set");
-    process.exit(1);
-  }
+  const repoBasePath = process.env.REPO_BASE_PATH || path.dirname(process.cwd());
+  const repoBaseName = process.env.REPO_NAME || path.basename(process.cwd());
+  const repoName = repoBaseName.indexOf("/") !== -1 ? repoBaseName.split("/")[1] : repoBaseName;
+
+  console.log(`Setting up worktree for base path: ${repoBasePath}, repo: ${repoName}`);
 
   const worktree = await createWorktree({
-    repoBasePath: process.env.REPO_BASE_PATH || process.cwd(),
-    repoName: process.env.REPO_NAME,
+    repoBasePath,
+    repoName,
     branchName: `ticket-${ticketId}`,
     baseBranch: "main",
   });
