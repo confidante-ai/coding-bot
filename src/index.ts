@@ -1,175 +1,109 @@
+#!/usr/bin/env node
+// CLI Implementation
 import "dotenv/config";
-import express, { Request, Response } from "express";
-import {
-  LinearWebhookClient,
-  AgentSessionEventWebhookPayload,
-} from "@linear/sdk/webhooks";
-import {
-  handleOAuthAuthorize,
-  handleOAuthCallback,
-  getOAuthToken,
-} from "./lib/oauth.js";
-import { AgentClient } from "./lib/agent/agentClient.js";
+import app from "./app.js";
+import { CLIClient } from "./lib/agent/agentClient.js";
+import { createWorktree } from "./lib/workflow/worktreeLifecycle.js";
+import { setupEnvironment } from "./lib/workflow/index.js";
+import { implementationPrompt } from "./lib/agent/prompt.js";
 
-const app = express();
-const PORT = process.env.PORT || 3000;
+function printUsage(): void {
+  console.log(`Usage: coding-bot <command> [options]
 
-// Middleware to parse JSON bodies
-app.use(express.json());
+Commands:
+  serve [--port <port>]            Start the HTTP server (default port: 3000)
+  implement [--ticket <ticketId>]  Implement a Linear ticket using the Claude agent
+  prompt <text...>                 Execute a prompt with the Claude agent
+`);
+}
 
-// Middleware to get raw body for webhook signature verification
-app.use(
-  "/webhook",
-  express.raw({ type: "application/json" }),
-  (req, _res, next) => {
-    // Store raw body for signature verification
-    (req as Request & { rawBody?: Buffer }).rawBody = req.body;
-    next();
-  }
-);
-
-/**
- * Health check endpoint
- */
-app.get("/health", (_req: Request, res: Response) => {
-  res.json({ status: "ok", service: "coding-bot" });
-});
-
-/**
- * Status endpoint with more detailed information
- */
-app.get("/status", (_req: Request, res: Response) => {
-  const status = {
-    service: "coding-bot",
-    version: "0.0.1",
-    status: "running",
-    uptime: process.uptime(),
-    config: {
-      port: PORT,
-      hasLinearWebhookSecret: !!process.env.LINEAR_WEBHOOK_SECRET,
-      hasAnthropicApiKey: !!process.env.ANTHROPIC_API_KEY,
-      hasGitHubToken: !!process.env.GITHUB_TOKEN,
-      repoBasePath: process.env.REPO_BASE_PATH || "not configured",
-      tailscaleHostname: process.env.TAILSCALE_HOSTNAME || "not configured",
-    },
-    timestamp: new Date().toISOString(),
-  };
-  res.json(status);
-});
-
-/**
- * Root endpoint
- */
-app.get("/", (_req: Request, res: Response) => {
-  res.send("Coding bot is running! 🤖");
-});
-
-/**
- * OAuth authorization endpoint
- */
-app.get("/oauth/authorize", (req: Request, res: Response) => {
-  handleOAuthAuthorize(req, res);
-});
-
-/**
- * OAuth callback endpoint
- */
-app.get("/oauth/callback", async (req: Request, res: Response) => {
-  await handleOAuthCallback(req, res);
-});
-
-/**
- * Webhook endpoint for Linear events
- */
-app.post("/webhook", async (req: Request, res: Response) => {
-  const webhookSecret = process.env.LINEAR_WEBHOOK_SECRET;
-
-  if (!webhookSecret) {
-    res.status(500).send("Webhook secret not configured");
-    return;
-  }
-
-  if (!process.env.ANTHROPIC_API_KEY) {
-    res.status(500).send("Anthropic API key not configured");
-    return;
-  }
-
-  try {
-    const rawBody = (req as Request & { rawBody?: Buffer }).rawBody;
-    if (!rawBody) {
-      res.status(400).send("Missing request body");
-      return;
+async function runServe(args: string[]): Promise<void> {
+  let port = 3000;
+  const portIndex = args.indexOf("--port");
+  if (portIndex !== -1 && args[portIndex + 1]) {
+    const parsed = parseInt(args[portIndex + 1], 10);
+    if (!isNaN(parsed)) {
+      port = parsed;
     }
-
-    // Create webhook client and handler
-    const webhookClient = new LinearWebhookClient(webhookSecret);
-    const handler = webhookClient.createHandler();
-
-    handler.on("AgentSessionEvent", async (payload) => {
-      await handleAgentSessionEvent(payload);
-    });
-
-    // Create a compatible request object for the Linear webhook handler
-    const webhookRequest = new globalThis.Request(
-      `${process.env.TAILSCALE_HOSTNAME}/webhook`,
-      {
-        method: "POST",
-        headers: Object.fromEntries(
-          Object.entries(req.headers).filter(
-            ([, v]) => typeof v === "string"
-          ) as [string, string][]
-        ),
-        body: rawBody,
-      }
-    );
-
-    const webhookResponse = await handler(webhookRequest);
-    res.status(webhookResponse.status).send(await webhookResponse.text());
-  } catch (error) {
-    console.error("Error in webhook handler:", error);
-    res.status(500).send("Error handling webhook");
-  }
-});
-
-/**
- * Handle an AgentSessionEvent webhook
- */
-async function handleAgentSessionEvent(
-  webhook: AgentSessionEventWebhookPayload
-): Promise<void> {
-  const token = await getOAuthToken(webhook.organizationId);
-  if (!token) {
-    console.error("Linear OAuth token not found");
-    return;
   }
 
-  const agentClient = new AgentClient(token);
-  const userPrompt = generateUserPrompt(webhook);
-  await agentClient.handleUserPrompt(webhook.agentSession.id, userPrompt);
+  app.listen(port, () => {
+    console.log(`Coding bot server running on port ${port}`);
+    console.log(`Health check: http://localhost:${port}/health`);
+    if (process.env.TAILSCALE_HOSTNAME) {
+      console.log(`Public URL: ${process.env.TAILSCALE_HOSTNAME}`);
+    }
+  });
 }
 
-/**
- * Generate a user prompt for the agent based on the webhook payload
- */
-function generateUserPrompt(webhook: AgentSessionEventWebhookPayload): string {
-  const issueTitle = webhook.agentSession.issue?.title;
-  const commentBody = webhook.agentSession.comment?.body;
-
-  if (issueTitle && commentBody) {
-    return `Issue: ${issueTitle}\n\nTask: ${commentBody}`;
-  } else if (issueTitle) {
-    return `Task: ${issueTitle}`;
-  } else if (commentBody) {
-    return `Task: ${commentBody}`;
+async function runPrompt(args: string[]): Promise<void> {
+  const prompt = args.join(" ");
+  if (!prompt) {
+    console.error("Error: No prompt provided");
+    process.exit(1);
   }
-  return "";
+
+  const client = new CLIClient();
+  await client.executePrompt(prompt);
 }
 
-// Start the server
-app.listen(PORT, () => {
-  console.log(`Coding bot server running on port ${PORT}`);
-  console.log(`Health check: http://localhost:${PORT}/health`);
-  if (process.env.TAILSCALE_HOSTNAME) {
-    console.log(`Public URL: ${process.env.TAILSCALE_HOSTNAME}`);
+async function runImplement(args: string[]): Promise<void> {
+  if (!args.includes("--ticket")) {
+    console.error("Error: No ticket ID provided");
+    process.exit(1);
   }
+
+  const ticketIndex = args.indexOf("--ticket");
+  const ticketId = args[ticketIndex + 1];
+  if (!ticketId) {
+    console.error("Error: No ticket ID provided");
+    process.exit(1);
+  }
+
+  if (!process.env.REPO_NAME) {
+    console.error("Error: REPO_NAME environment variables must be set");
+    process.exit(1);
+  }
+
+  const worktree = await createWorktree({
+    repoBasePath: process.env.REPO_BASE_PATH || process.cwd(),
+    repoName: process.env.REPO_NAME,
+    branchName: `ticket-${ticketId}`,
+    baseBranch: "main",
+  });
+
+  console.log(`Switched to worktree at path: ${worktree.worktreePath}`);
+  process.chdir(worktree.worktreePath);
+
+  const environment = await setupEnvironment({ cwd: worktree.worktreePath });
+
+  const prompt = implementationPrompt(ticketId, worktree.worktreePath);
+
+  const client = new CLIClient();
+  await client.executePrompt(prompt);
+}
+
+async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+  const command = args[0];
+
+  switch (command) {
+    case "serve":
+      await runServe(args.slice(1));
+      break;
+    case "prompt":
+      await runPrompt(args.slice(1));
+      break;
+    case "implement":
+      await runImplement(args.slice(1));
+      break;
+    default:
+      printUsage();
+      process.exit(command ? 1 : 0);
+  }
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
 });
