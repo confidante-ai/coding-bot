@@ -28,15 +28,24 @@ The bot runs as an Express.js server on your local machine, exposed to the inter
                                                   └─────────────────┘
 ```
 
+### Project Structure
+
 ```
 src/
 ├── index.ts              # Express.js server entry point
 ├── lib/
 │   ├── agent/
 │   │   ├── agentClient.ts # Claude Agent SDK integration
-│   │   ├── tools.ts       # Tool implementations (git, file ops, etc.)
-│   │   └── prompt.ts      # System prompt and skill definitions
-│   └── oauth.ts           # Linear OAuth handling
+│   │   └── prompt.ts      # System prompt for coding tasks
+│   ├── github/
+│   │   ├── githubClient.ts # GitHub PR management (Octokit wrapper)
+│   │   └── index.ts
+│   ├── workflow/
+│   │   ├── ticketHandler.ts    # Extract implementation plans from tickets
+│   │   ├── worktreeLifecycle.ts # Git worktree operations
+│   │   ├── envSetup.ts         # Environment setup and validation
+│   │   └── index.ts
+│   ├── oauth.ts           # Linear OAuth handling
 │   └── types.ts           # TypeScript type definitions
 ```
 
@@ -46,7 +55,7 @@ src/
 2. **Worktree Creation** - Bot creates a new git worktree for the feature branch
 3. **Environment Setup** - Initializes the worktree (dependencies, environment, etc.)
 4. **Implementation** - Executes the plan using Claude Agent SDK as the coding engine
-5. **Completion** - Commits changes, pushes branch, and updates Linear ticket status
+5. **Completion** - Commits changes, pushes branch, creates PR, and updates Linear ticket status
 
 ## Prerequisites
 
@@ -56,6 +65,7 @@ src/
 - Local access to target repositories
 - Linear workspace with permissions to create an OAuth app
 - Anthropic API key (for Claude Agent SDK)
+- GitHub token (for PR creation)
 
 ## Setup
 
@@ -78,17 +88,25 @@ This will give you a public URL like `https://your-machine.tailnet-name.ts.net`
 
 ### 3. Configure Environment
 
-Create a `.env` file with the following:
+Create a `.env` file with the following (see `.env.example` for a template):
 
 ```env
+# Server Configuration
 PORT=3000
 TAILSCALE_HOSTNAME=https://your-machine.tailnet-name.ts.net
 
+# Anthropic API
 ANTHROPIC_API_KEY=your-anthropic-api-key
+
+# Linear OAuth
 LINEAR_CLIENT_ID=your-linear-client-id
 LINEAR_CLIENT_SECRET=your-linear-client-secret
 LINEAR_WEBHOOK_SECRET=your-webhook-secret
 
+# GitHub (for PR creation)
+GITHUB_TOKEN=your-github-token
+
+# Repository Configuration
 REPO_BASE_PATH=/path/to/your/repositories
 ```
 
@@ -136,24 +154,45 @@ Tickets should include an implementation plan in a structured format. The bot ex
 - Dependencies to install (if any)
 - Build/validation steps
 
-## Claude Skills
+Example format in ticket description:
 
-The bot's workflow is defined as a Claude skill that orchestrates:
+```markdown
+## Implementation Plan
 
-- Reading and parsing the implementation plan
-- Executing file operations (create, edit, delete)
-- Running shell commands (git, npm, tests)
-- Validating changes against the plan
-- Handling errors and edge cases
+### Files
+- [create] src/lib/newFeature.ts - New feature implementation
+- [modify] src/index.ts - Add endpoint for new feature
+
+### Dependencies
+- lodash
+
+### Test Commands
+- npm run test
+
+### Build Commands
+- npm run build
+```
+
+## Claude Agent SDK
+
+The bot uses the Claude Agent SDK which provides:
+
+- **Built-in tools** for file operations, shell commands, and git operations
+- **Permission modes** for safe autonomous execution
+- **Streaming responses** for real-time progress updates to Linear
+
+The SDK handles all coding operations, so no custom tool implementations are needed.
 
 ## API Endpoints
 
 The Express.js server exposes:
 
+- `GET /` - Root endpoint with service info
+- `GET /health` - Simple health check endpoint
+- `GET /status` - Detailed status with configuration info
 - `POST /webhook` - Receives Linear webhooks for ticket assignments
 - `GET /oauth/authorize` - OAuth authorization endpoint
 - `GET /oauth/callback` - OAuth callback handler
-- `GET /health` - Health check endpoint
 
 ## Development
 
@@ -163,11 +202,11 @@ The Express.js server exposes:
 # Start with hot reload
 npm run dev
 
-# Run tests
-npm run test
-
 # Type check
 npm run typecheck
+
+# Lint
+npm run lint
 ```
 
 ### Testing Webhooks Locally
@@ -176,9 +215,9 @@ With Tailscale Funnel running, Linear webhooks will reach your local machine dir
 
 ### Customization
 
-1. Modify `src/lib/agent/prompt.ts` to adjust the agent's behavior
-2. Add new tools in `src/lib/agent/tools.ts` for additional capabilities
-3. Update the skill definition to change the implementation workflow
+1. Modify `src/lib/agent/prompt.ts` to adjust the agent's coding behavior
+2. Update workflow modules in `src/lib/workflow/` for custom orchestration
+3. Extend GitHub client in `src/lib/github/` for additional PR features
 
 ## Integration with Planning Bots
 

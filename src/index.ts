@@ -36,6 +36,28 @@ app.get("/health", (_req: Request, res: Response) => {
 });
 
 /**
+ * Status endpoint with more detailed information
+ */
+app.get("/status", (_req: Request, res: Response) => {
+  const status = {
+    service: "coding-bot",
+    version: "0.0.1",
+    status: "running",
+    uptime: process.uptime(),
+    config: {
+      port: PORT,
+      hasLinearWebhookSecret: !!process.env.LINEAR_WEBHOOK_SECRET,
+      hasAnthropicApiKey: !!process.env.ANTHROPIC_API_KEY,
+      hasGitHubToken: !!process.env.GITHUB_TOKEN,
+      repoBasePath: process.env.REPO_BASE_PATH || "not configured",
+      tailscaleHostname: process.env.TAILSCALE_HOSTNAME || "not configured",
+    },
+    timestamp: new Date().toISOString(),
+  };
+  res.json(status);
+});
+
+/**
  * Root endpoint
  */
 app.get("/", (_req: Request, res: Response) => {
