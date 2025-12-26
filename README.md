@@ -1,113 +1,203 @@
-# Weather Bot
+# Coding Bot
 
-A simple agent powered by OpenAI that integrates with Linear to provide current weather and time information. The bot is set up to be deployed to a Cloudflare worker.
+A headless coding agent powered by the [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-typescript) that integrates with Linear to automatically implement tickets assigned to it. The bot runs on a local machine using Express.js and Tailscale to expose webhooks to Linear.
 
-The bot can look up coordinates for cities, get current weather conditions, and provide local time information for any location. It responds to `AgentSession` webhooks from Linear and creates `AgentActivity` entries in response to prompts from users in Linear.
+## Overview
 
-## Tools Available
+This bot monitors Linear for tickets assigned to it and automatically implements them following a workflow defined as a Claude skill. Each ticket comes with a complete implementation plan (created by upstream planning bots), which this bot executes by:
 
-The agent has access to three main tools:
-
-1. **`getCoordinates(city_name)`** - Get coordinates for a city
-2. **`getWeather(lat, long)`** - Get current weather for given coordinates (latitude first, then longitude)
-3. **`getTime(lat, long)`** - Get current time for given coordinates (latitude first, then longitude)
-
-## Example Interactions
-
-- "What tools do you have access to?"
-- "What's the weather like in Paris?"
-- "What time is it in Tokyo?"
-- "Tell me about the weather and time in New York"
+1. Creating a git worktree for isolated development
+2. Initializing the worktree environment
+3. Following the implementation plan step-by-step
+4. Committing changes and creating pull requests
 
 ## Architecture
 
-The project is built as a Cloudflare Worker with the following structure:
+The bot runs as an Express.js server on your local machine, exposed to the internet via Tailscale:
+
+```
+┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
+│     Linear      │──────│    Tailscale    │──────│  Local Machine  │
+│    Webhooks     │      │     Funnel      │      │   Express.js    │
+└─────────────────┘      └─────────────────┘      └─────────────────┘
+                                                          │
+                                                          ▼
+                                                  ┌─────────────────┐
+                                                  │  Claude Agent   │
+                                                  │      SDK        │
+                                                  └─────────────────┘
+```
 
 ```
 src/
-├── index.ts              # Main worker entry point
+├── index.ts              # Express.js server entry point
 ├── lib/
 │   ├── agent/
-│   │   ├── agentClient.ts # Main agent logic
-│   │   ├── tools.ts       # Tool implementations
-│   │   └── prompt.ts      # Prompt provided to LLM
+│   │   ├── agentClient.ts # Claude Agent SDK integration
+│   │   ├── tools.ts       # Tool implementations (git, file ops, etc.)
+│   │   └── prompt.ts      # System prompt and skill definitions
 │   └── oauth.ts           # Linear OAuth handling
 │   └── types.ts           # TypeScript type definitions
 ```
 
+## Workflow
+
+1. **Ticket Assignment** - A ticket is assigned to the bot in Linear with an attached implementation plan
+2. **Worktree Creation** - Bot creates a new git worktree for the feature branch
+3. **Environment Setup** - Initializes the worktree (dependencies, environment, etc.)
+4. **Implementation** - Executes the plan using Claude Agent SDK as the coding engine
+5. **Completion** - Commits changes, pushes branch, and updates Linear ticket status
+
+## Prerequisites
+
+- Node.js 18+
+- Git
+- [Tailscale](https://tailscale.com/) installed and configured
+- Local access to target repositories
+- Linear workspace with permissions to create an OAuth app
+- Anthropic API key (for Claude Agent SDK)
+
 ## Setup
 
-### Prerequisites
+### 1. Install Dependencies
 
-- Cloudflare account
-- Linear workspace with permissions to create an OAuth app
-- OpenAI API key
+```bash
+npm install
+```
 
-### Cloudflare Worker Setup
+### 2. Configure Tailscale Funnel
 
-1. **Install dependencies**
-   ```bash
-   npm install
-   ```
+Tailscale Funnel exposes your local Express.js server to the internet, allowing Linear to send webhooks to your machine.
 
-2. **Configure Cloudflare environment**
+```bash
+# Enable Tailscale Funnel (requires admin approval in Tailscale admin console)
+tailscale funnel 3000
+```
 
-   * Set your `WORKER_URL` and `LINEAR_CLIENT_ID` variables in `wrangler.jsonc`
+This will give you a public URL like `https://your-machine.tailnet-name.ts.net`
 
-   * Set the client secret, webhook secret, and OpenAI API key via wrangler
-   ```
-   wrangler secret put LINEAR_CLIENT_SECRET
-   wrangler secret put LINEAR_WEBHOOK_SECRET
-   wrangler secret put OPENAI_API_KEY
-   ```
+### 3. Configure Environment
 
-   * Create a KV namespace and set its ID in `wrangler.jsonc` as well
-   ```
-   wrangler kv namespace create "WEATHER_BOT_TOKENS"
-   ```
+Create a `.env` file with the following:
 
-3. **Deploy**
-   ```
-   npm run deploy
-   ```
+```env
+PORT=3000
+TAILSCALE_HOSTNAME=https://your-machine.tailnet-name.ts.net
 
-### Linear OAuth Setup
+ANTHROPIC_API_KEY=your-anthropic-api-key
+LINEAR_CLIENT_ID=your-linear-client-id
+LINEAR_CLIENT_SECRET=your-linear-client-secret
+LINEAR_WEBHOOK_SECRET=your-webhook-secret
+
+REPO_BASE_PATH=/path/to/your/repositories
+```
+
+### 4. Linear OAuth Setup
 
 1. Create a new OAuth app in Linear
-2. Set the redirect URI to `https://<your-worker-url>/oauth/callback`
-3. Enable webhooks and set the webhook endpoint to `https://<your-worker-url>/oauth/webhook`
-4. Subscribe to agent session webhooks (and app user notification webhooks, if you'd like)
-5. Copy the client ID, client secret, and webhook signing secret to use in your Cloudflare worker
+2. Set the redirect URI to `https://your-machine.tailnet-name.ts.net/oauth/callback`
+3. Enable webhooks and set the webhook endpoint to `https://your-machine.tailnet-name.ts.net/webhook`
+4. Subscribe to agent session webhooks
+5. Copy the client ID, client secret, and webhook signing secret
 
-## Installation
+### 5. Run the Bot
 
-Once you've finished setting things up in both Linear and Cloudflare, visit `https://<your-worker-url>/oauth/authorize` to initiate OAuth between Weather Bot and Linear. This will install Weather Bot in your Linear workspace with an `actor=app` OAuth token.
+```bash
+# Start the Express.js server
+npm run start
+
+# Or for development with auto-reload
+npm run dev
+```
+
+The server will start on `http://localhost:3000` and be accessible via your Tailscale Funnel URL.
+
+## Git Worktree Strategy
+
+The bot uses git worktrees to enable parallel development without branch switching:
+
+```bash
+# Bot automatically creates worktrees like:
+git worktree add ../feature-USP-1234 -b feature/USP-1234
+
+# After completion, worktrees can be cleaned up:
+git worktree remove ../feature-USP-1234
+```
+
+This allows the bot to work on multiple tickets simultaneously without conflicts.
+
+## Implementation Plans
+
+Tickets should include an implementation plan in a structured format. The bot expects plans created by upstream planning bots that include:
+
+- List of files to create/modify
+- Specific code changes with context
+- Test requirements
+- Dependencies to install (if any)
+- Build/validation steps
+
+## Claude Skills
+
+The bot's workflow is defined as a Claude skill that orchestrates:
+
+- Reading and parsing the implementation plan
+- Executing file operations (create, edit, delete)
+- Running shell commands (git, npm, tests)
+- Validating changes against the plan
+- Handling errors and edge cases
+
+## API Endpoints
+
+The Express.js server exposes:
+
+- `POST /webhook` - Receives Linear webhooks for ticket assignments
+- `GET /oauth/authorize` - OAuth authorization endpoint
+- `GET /oauth/callback` - OAuth callback handler
+- `GET /health` - Health check endpoint
 
 ## Development
 
 ### Local Development
 
 ```bash
-# Start local development server
+# Start with hot reload
 npm run dev
+
+# Run tests
+npm run test
+
+# Type check
+npm run typecheck
 ```
 
-## Code Structure
+### Testing Webhooks Locally
 
-### API Endpoints
+With Tailscale Funnel running, Linear webhooks will reach your local machine directly. You can also use the Tailscale admin console to monitor traffic.
 
-- `POST /webhook` - Endpoint that receives Linear webhooks for `AgentSession` and `AgentActivity` creation
-- `GET /oauth/authorize` - OAuth authorization endpoint
-- `GET /oauth/callback` - OAuth callback handler
+### Customization
 
-### Usage
+1. Modify `src/lib/agent/prompt.ts` to adjust the agent's behavior
+2. Add new tools in `src/lib/agent/tools.ts` for additional capabilities
+3. Update the skill definition to change the implementation workflow
 
-1. Fork the repository
-2. Create a feature branch
-3. Make changes as necessary
-    - Update the tools to different ones based on your use case
-    - Handle converting the agent's response into a Linear activity based on your custom prompt
-    - Handle additional webhooks involving your agent
+## Integration with Planning Bots
+
+This bot is designed to work as part of a multi-agent system:
+
+1. **Planning Bot** - Analyzes tickets and creates detailed implementation plans
+2. **Coding Bot** (this repo) - Executes the implementation plans
+3. **Review Bot** (optional) - Reviews PRs and provides feedback
+
+The handoff between bots happens via Linear ticket updates with structured plan data.
+
+## Tailscale Benefits
+
+Using Tailscale instead of cloud deployment provides:
+
+- **Local execution** - Full access to local file system and git repositories
+- **Security** - Traffic encrypted end-to-end, no exposed ports
+- **Simplicity** - No cloud infrastructure to manage
+- **Cost** - No hosting fees for webhook endpoints
 
 ## License
 
