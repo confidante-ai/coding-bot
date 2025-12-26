@@ -17,29 +17,13 @@ export type Content =
   | { type: L.AgentActivityType.Thought; body: string }
   | {
       type: L.AgentActivityType.Action;
-      action: ToolName;
+      action: string;
       parameter: string | null;
       result?: string;
     }
   | { type: L.AgentActivityType.Response; body: string }
   | { type: L.AgentActivityType.Elicitation; body: string }
   | { type: L.AgentActivityType.Error; body: string };
-
-/**
- * The name of a tool that can be executed by the agent
- */
-export type ToolName = "getCoordinates" | "getWeather" | "getTime";
-
-/**
- * Check if a string is a valid tool name
- * @param value - The string to check
- * @returns True if the string is a valid tool name, false otherwise
- */
-export const isToolName = (value: string): value is ToolName => {
-  return (
-    value === "getCoordinates" || value === "getWeather" || value === "getTime"
-  );
-};
 
 /**
  * OAuth response from Linear.
@@ -59,4 +43,23 @@ export interface StoredTokenData {
   access_token: string;
   refresh_token: string;
   expires_at: number; // Unix timestamp
+}
+
+/**
+ * Implementation plan attached to a Linear ticket
+ */
+export interface ImplementationPlan {
+  files: FileChange[];
+  dependencies?: string[];
+  testCommands?: string[];
+  buildCommands?: string[];
+}
+
+/**
+ * A file change in an implementation plan
+ */
+export interface FileChange {
+  path: string;
+  action: "create" | "modify" | "delete";
+  description: string;
 }

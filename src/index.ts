@@ -1,122 +1,153 @@
-import { LinearWebhookClient } from "@linear/sdk/webhooks";
+import "dotenv/config";
+import express, { Request, Response } from "express";
+import {
+  LinearWebhookClient,
+  AgentSessionEventWebhookPayload,
+} from "@linear/sdk/webhooks";
 import {
   handleOAuthAuthorize,
   handleOAuthCallback,
   getOAuthToken,
-} from "./lib/oauth";
-import { AgentClient } from "./lib/agent/agentClient";
-import { AgentSessionEventWebhookPayload } from "@linear/sdk";
+} from "./lib/oauth.js";
+import { AgentClient } from "./lib/agent/agentClient.js";
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Middleware to parse JSON bodies
+app.use(express.json());
+
+// Middleware to get raw body for webhook signature verification
+app.use(
+  "/webhook",
+  express.raw({ type: "application/json" }),
+  (req, _res, next) => {
+    // Store raw body for signature verification
+    (req as Request & { rawBody?: Buffer }).rawBody = req.body;
+    next();
+  }
+);
 
 /**
- * This Cloudflare worker handles all requests for the demo agent.
+ * Health check endpoint
  */
-export default {
-  async fetch(
-    request: Request,
-    env: Env,
-    ctx: ExecutionContext
-  ): Promise<Response> {
-    const url = new URL(request.url);
+app.get("/health", (_req: Request, res: Response) => {
+  res.json({ status: "ok", service: "coding-bot" });
+});
 
-    if (url.pathname === "/") {
-      return new Response("Weather bot says hello! 🌤️", { status: 200 });
-    }
+/**
+ * Root endpoint
+ */
+app.get("/", (_req: Request, res: Response) => {
+  res.send("Coding bot is running! 🤖");
+});
 
-    // Handle OAuth authorize route
-    if (url.pathname === "/oauth/authorize") {
-      return handleOAuthAuthorize(request, env);
-    }
+/**
+ * OAuth authorization endpoint
+ */
+app.get("/oauth/authorize", (req: Request, res: Response) => {
+  handleOAuthAuthorize(req, res);
+});
 
-    // Handle OAuth callback route
-    if (url.pathname === "/oauth/callback") {
-      return handleOAuthCallback(request, env);
-    }
+/**
+ * OAuth callback endpoint
+ */
+app.get("/oauth/callback", async (req: Request, res: Response) => {
+  await handleOAuthCallback(req, res);
+});
 
-    // Handle webhook route
-    if (url.pathname === "/webhook" && request.method === "POST") {
-      if (!env.LINEAR_WEBHOOK_SECRET) {
-        return new Response("Webhook secret not configured", { status: 500 });
-      }
+/**
+ * Webhook endpoint for Linear events
+ */
+app.post("/webhook", async (req: Request, res: Response) => {
+  const webhookSecret = process.env.LINEAR_WEBHOOK_SECRET;
 
-      if (!env.OPENAI_API_KEY) {
-        return new Response("OpenAI API key not configured", { status: 500 });
-      }
+  if (!webhookSecret) {
+    res.status(500).send("Webhook secret not configured");
+    return;
+  }
 
-      return this.handleWebhookWithEventListener(request, env, ctx);
-    }
+  if (!process.env.ANTHROPIC_API_KEY) {
+    res.status(500).send("Anthropic API key not configured");
+    return;
+  }
 
-    return new Response("OK", { status: 200 });
-  },
-
-  /**
-   * Handle webhook using the new LinearWebhookClient with event emitter pattern.
-   * This uses the createHandler() method for simplified event handling.
-   * @param request The incoming request.
-   * @param env The environment variables.
-   * @param ctx The execution context.
-   * @returns A response promise.
-   */
-  async handleWebhookWithEventListener(
-    request: Request,
-    env: Env,
-    ctx: ExecutionContext
-  ): Promise<Response> {
-    try {
-      // Create webhook client
-      const webhookClient = new LinearWebhookClient(env.LINEAR_WEBHOOK_SECRET);
-      const handler = webhookClient.createHandler();
-
-      handler.on("AgentSessionEvent", async (payload) => {
-        await this.handleAgentSessionEvent(payload, env, ctx);
-      });
-
-      return await handler(request);
-    } catch (error) {
-      console.error("Error in webhook handler:", error);
-      return new Response("Error handling webhook", { status: 500 });
-    }
-  },
-
-  /**
-   * Handle an AgentSessionEvent webhook asynchronously (for non-blocking processing).
-   * @param webhook The agent session event webhook payload.
-   * @param env The environment variables.
-   * @param ctx The execution context.
-   * @returns A promise that resolves when the webhook is handled.
-   */
-  async handleAgentSessionEvent(
-    webhook: any,
-    env: Env,
-    ctx: ExecutionContext
-  ): Promise<void> {
-    const token = await getOAuthToken(env, webhook.organizationId);
-    if (!token) {
-      console.error("Linear OAuth token not found");
+  try {
+    const rawBody = (req as Request & { rawBody?: Buffer }).rawBody;
+    if (!rawBody) {
+      res.status(400).send("Missing request body");
       return;
     }
 
-    const agentClient = new AgentClient(token, env.OPENAI_API_KEY);
-    const userPrompt = this.generateUserPrompt(webhook);
-    await agentClient.handleUserPrompt(webhook.agentSession.id, userPrompt);
-  },
+    // Create webhook client and handler
+    const webhookClient = new LinearWebhookClient(webhookSecret);
+    const handler = webhookClient.createHandler();
 
-  /**
-   * Generate a user prompt for the agent based on the webhook payload.
-   * Modify this as needed if you want to give the agent more context by querying additional APIs.
-   *
-   * @param webhook The webhook payload.
-   * @returns The user prompt.
-   */
-  generateUserPrompt(webhook: AgentSessionEventWebhookPayload): string {
-    const issueTitle = webhook.agentSession.issue?.title;
-    const commentBody = webhook.agentSession.comment?.body;
-    if (issueTitle && commentBody) {
-      return `Issue: ${issueTitle}\n\nTask: ${commentBody}`;
-    } else if (issueTitle) {
-      return `Task: ${issueTitle}`;
-    } else if (commentBody) {
-      return `Task: ${commentBody}`;
-    }
-    return "";
-  },
-};
+    handler.on("AgentSessionEvent", async (payload) => {
+      await handleAgentSessionEvent(payload);
+    });
+
+    // Create a compatible request object for the Linear webhook handler
+    const webhookRequest = new globalThis.Request(
+      `${process.env.TAILSCALE_HOSTNAME}/webhook`,
+      {
+        method: "POST",
+        headers: Object.fromEntries(
+          Object.entries(req.headers).filter(
+            ([, v]) => typeof v === "string"
+          ) as [string, string][]
+        ),
+        body: rawBody,
+      }
+    );
+
+    const webhookResponse = await handler(webhookRequest);
+    res.status(webhookResponse.status).send(await webhookResponse.text());
+  } catch (error) {
+    console.error("Error in webhook handler:", error);
+    res.status(500).send("Error handling webhook");
+  }
+});
+
+/**
+ * Handle an AgentSessionEvent webhook
+ */
+async function handleAgentSessionEvent(
+  webhook: AgentSessionEventWebhookPayload
+): Promise<void> {
+  const token = await getOAuthToken(webhook.organizationId);
+  if (!token) {
+    console.error("Linear OAuth token not found");
+    return;
+  }
+
+  const agentClient = new AgentClient(token);
+  const userPrompt = generateUserPrompt(webhook);
+  await agentClient.handleUserPrompt(webhook.agentSession.id, userPrompt);
+}
+
+/**
+ * Generate a user prompt for the agent based on the webhook payload
+ */
+function generateUserPrompt(webhook: AgentSessionEventWebhookPayload): string {
+  const issueTitle = webhook.agentSession.issue?.title;
+  const commentBody = webhook.agentSession.comment?.body;
+
+  if (issueTitle && commentBody) {
+    return `Issue: ${issueTitle}\n\nTask: ${commentBody}`;
+  } else if (issueTitle) {
+    return `Task: ${issueTitle}`;
+  } else if (commentBody) {
+    return `Task: ${commentBody}`;
+  }
+  return "";
+}
+
+// Start the server
+app.listen(PORT, () => {
+  console.log(`Coding bot server running on port ${PORT}`);
+  console.log(`Health check: http://localhost:${PORT}/health`);
+  if (process.env.TAILSCALE_HOSTNAME) {
+    console.log(`Public URL: ${process.env.TAILSCALE_HOSTNAME}`);
+  }
+});

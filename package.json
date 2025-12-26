@@ -1,28 +1,35 @@
 {
-  "name": "weather-bot",
-  "description": "Weather bot that interacts with Linear",
+  "name": "coding-bot",
+  "description": "Coding bot that implements Linear tickets using Claude Agent SDK",
   "version": "0.0.1",
+  "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy --minify",
-    "cf-typegen": "wrangler types --env-interface CloudflareBindings",
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts",
     "lint:fix": "eslint src --ext .ts --fix",
     "prepare": "husky"
   },
   "dependencies": {
+    "@anthropic-ai/claude-code": "^0.2.32",
     "@linear/sdk": "58.0.0",
+    "@octokit/rest": "^21.1.1",
     "@types/node": "^24.0.14",
-    "openai": "4.85.4",
-    "wrangler": "4.25.0"
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "simple-git": "^3.27.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
+    "@types/express": "^5.0.2",
     "@typescript-eslint/eslint-plugin": "^8.32.1",
     "@typescript-eslint/parser": "^8.32.1",
     "eslint": "^9.26.0",
     "eslint-config-prettier": "^10.1.5",
     "husky": "^9.1.7",
-    "wrangler": "^4.25.0"
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
   }
 }
