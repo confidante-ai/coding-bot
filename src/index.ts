@@ -4,7 +4,10 @@ import "dotenv/config";
 import path from "node:path";
 import app from "./app.js";
 import { CLIClient } from "./lib/agent/agentClient.js";
-import { createWorktree } from "./lib/workflow/worktreeLifecycle.js";
+import {
+  cleanupWorktree,
+  createWorktree,
+} from "./lib/workflow/worktreeLifecycle.js";
 import { setupEnvironment } from "./lib/workflow/index.js";
 import { implementationPrompt } from "./lib/agent/prompt.js";
 
@@ -14,6 +17,7 @@ function printUsage(): void {
 Commands:
   serve [--port <port>]            Start the HTTP server (default port: 3000)
   implement [--ticket <ticketId>]  Implement a Linear ticket using the Claude agent
+  cleanup [--ticket <ticketId>]    Clean up worktrees and environments
   prompt <text...>                 Execute a prompt with the Claude agent
 `);
 }
@@ -48,7 +52,19 @@ async function runPrompt(args: string[]): Promise<void> {
   await client.executePrompt(prompt);
 }
 
-async function runImplement(args: string[]): Promise<void> {
+function getRepoPaths(): { repoBasePath: string; repoName: string } {
+  const repoBasePath =
+    process.env.REPO_BASE_PATH || path.dirname(process.cwd());
+  const repoBaseName = process.env.REPO_NAME || path.basename(process.cwd());
+  const repoName =
+    repoBaseName.indexOf("/") !== -1
+      ? repoBaseName.split("/")[1]
+      : repoBaseName;
+
+  return { repoBasePath, repoName };
+}
+
+function getTicketNumber(args: string[]): string {
   if (!args.includes("--ticket")) {
     console.error("Error: No ticket ID provided");
     process.exit(1);
@@ -60,12 +76,16 @@ async function runImplement(args: string[]): Promise<void> {
     console.error("Error: No ticket ID provided");
     process.exit(1);
   }
+  return ticketId;
+}
 
-  const repoBasePath = process.env.REPO_BASE_PATH || path.dirname(process.cwd());
-  const repoBaseName = process.env.REPO_NAME || path.basename(process.cwd());
-  const repoName = repoBaseName.indexOf("/") !== -1 ? repoBaseName.split("/")[1] : repoBaseName;
+async function runImplement(args: string[]): Promise<void> {
+  const { repoBasePath, repoName } = getRepoPaths();
+  const ticketId = getTicketNumber(args);
 
-  console.log(`Setting up worktree for base path: ${repoBasePath}, repo: ${repoName}`);
+  console.log(
+    `Setting up worktree for base path: ${repoBasePath}, repo: ${repoName}`
+  );
 
   const worktree = await createWorktree({
     repoBasePath,
@@ -78,11 +98,32 @@ async function runImplement(args: string[]): Promise<void> {
   process.chdir(worktree.worktreePath);
 
   const environment = await setupEnvironment({ cwd: worktree.worktreePath });
+  console.log(`Environment set up at path: ${worktree.worktreePath}`);
 
   const prompt = implementationPrompt(ticketId, worktree.worktreePath);
+  console.log(prompt);
 
   const client = new CLIClient();
   await client.executePrompt(prompt);
+}
+
+async function runCleanup(args: string[]): Promise<void> {
+  const { repoBasePath, repoName } = getRepoPaths();
+  const ticketId = getTicketNumber(args);
+  const branchName = `ticket-${ticketId}`;
+
+  console.log(
+    `Cleaning up worktree for base path: ${repoBasePath}, repo: ${repoName}, branch: ${branchName}`
+  );
+
+  // Cleanup worktree
+  try {
+    await cleanupWorktree(repoBasePath, repoName, branchName);
+    console.log(`Cleaned up worktree for branch: ${branchName}`);
+  } catch (error) {
+    console.error("Error during cleanup:", error);
+    process.exit(1);
+  }
 }
 
 async function main(): Promise<void> {
@@ -98,6 +139,9 @@ async function main(): Promise<void> {
       break;
     case "implement":
       await runImplement(args.slice(1));
+      break;
+    case "cleanup":
+      await runCleanup(args.slice(1));
       break;
     default:
       printUsage();

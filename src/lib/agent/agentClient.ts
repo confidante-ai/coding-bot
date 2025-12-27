@@ -28,6 +28,7 @@ export async function executePrompt(
   callbacks: AgentCallbacks
 ): Promise<ExecutePromptResult> {
   const cwd = process.env.REPO_BASE_PATH || process.cwd();
+  console.log(`Executing prompt in directory: ${cwd}`);
 
   const agentQuery = query({
     prompt: userPrompt,
@@ -60,9 +61,7 @@ export async function executePrompt(
         // Handle text content
         const textContent = content
           .filter(
-            (
-              block
-            ): block is ContentBlock & { type: "text"; text: string } =>
+            (block): block is ContentBlock & { type: "text"; text: string } =>
               block.type === "text" && typeof block.text === "string"
           )
           .map((block) => block.text)
@@ -153,7 +152,9 @@ export class AgentClient {
           );
         },
         onSystemInit: (tools) => {
-          console.log(`Claude Agent initialized with tools: ${tools.join(", ")}`);
+          console.log(
+            `Claude Agent initialized with tools: ${tools.join(", ")}`
+          );
         },
       });
 
@@ -246,8 +247,14 @@ export class CLIClient {
       onText: () => {
         console.log("Thinking...");
       },
-      onToolUse: (toolName) => {
-        console.log(`Using tool: ${toolName}`);
+      onToolUse: (toolName, input) => {
+        console.log(
+          `Using tool: ${toolName} with input: ${JSON.stringify(
+            input,
+            null,
+            2
+          )}`
+        );
       },
       onSystemInit: () => {
         console.log("Agent initialized");
