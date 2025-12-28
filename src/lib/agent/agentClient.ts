@@ -41,7 +41,8 @@ export interface ExecutePromptResult {
  */
 export async function executePrompt(
   userPrompt: string,
-  callbacks: AgentCallbacks
+  callbacks: AgentCallbacks,
+  tools?: string[]
 ): Promise<ExecutePromptResult> {
   const cwd = process.env.REPO_BASE_PATH || process.cwd();
   console.log(`Executing prompt in directory: ${cwd}`);
@@ -54,7 +55,7 @@ export async function executePrompt(
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
       settingSources: ["project", "user"],
-      tools: { type: "preset", preset: "claude_code" },
+      tools: tools ? tools : { type: "preset", preset: "claude_code" },
       includePartialMessages: false,
     },
   });
@@ -273,23 +274,27 @@ export class AgentClient {
       const userPrompt = questionPrompt(question, previousContext);
       console.log(userPrompt);
 
-      const result = await executePrompt(userPrompt, {
-        onText: async (text) => {
-          await this.createThought(agentSession.id, text);
+      const result = await executePrompt(
+        userPrompt,
+        {
+          onText: async (text) => {
+            await this.createThought(agentSession.id, text);
+          },
+          onToolUse: async (toolName, input) => {
+            await this.createAction(
+              agentSession.id,
+              toolName,
+              JSON.stringify(input, null, 2)
+            );
+          },
+          onSystemInit: (tools) => {
+            console.log(
+              `Claude Agent initialized with tools: ${tools.join(", ")}`
+            );
+          },
         },
-        onToolUse: async (toolName, input) => {
-          await this.createAction(
-            agentSession.id,
-            toolName,
-            JSON.stringify(input, null, 2)
-          );
-        },
-        onSystemInit: (tools) => {
-          console.log(
-            `Claude Agent initialized with tools: ${tools.join(", ")}`
-          );
-        },
-      });
+        ["read", "grep", "glob", "bash"]
+      );
 
       if (result.success) {
         await this.createResponse(
