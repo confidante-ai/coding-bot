@@ -1,6 +1,10 @@
 import { LinearClient, LinearDocument as L } from "@linear/sdk";
 import { query, SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
 import { Content } from "../types.js";
+import { createWorktree, getRepoPaths, setupEnvironment } from "../workflow/index.js";
+import { implementationPlanPrompt } from "./prompt.js";
+import { AgentSessionEventWebhookPayload } from "@linear/sdk/webhooks";
+import { title } from "process";
 
 /**
  * Callbacks for handling agent output during prompt execution.
@@ -129,24 +133,64 @@ export class AgentClient {
    * Handle a user prompt by processing it through the Claude Agent SDK.
    */
   public async handleUserPrompt(
-    agentSessionId: string,
-    userPrompt: string
+    agentSession: AgentSessionEventWebhookPayload["agentSession"]
   ): Promise<void> {
     try {
-      console.log(`Processing ticket: ${userPrompt.substring(0, 100)}...`);
+      const ticketId = agentSession.issue?.identifier || "";
+      const issue = await this.linearClient.issue(ticketId);
+      console.log(`Fetched issue for ticket ID: ${ticketId}`);
+      console.dir(issue, { depth: null });
+      const issueTitle = issue.title;
+
+      const comments = await issue.comments();
+      console.log(`Fetched comments for ticket ID: ${ticketId}`);
+      console.dir(comments, { depth: null });
+
+      const attachments = await issue.attachments();
+      console.log(`Fetched attachments for ticket ID: ${ticketId}`);
+      console.dir(attachments, { depth: null });
+
+      const latestComment = comments.nodes.sort((a, b) =>
+        a.createdAt < b.createdAt ? 1 : -1
+      )[0];
+      const commentBody = comments.nodes[0].body || latestComment?.documentContent?.content || latestComment.body || issue.description || issueTitle;
+
+      console.log(`Processing ticket: ${ticketId}...`);
+
+        const { repoBasePath, repoName } = getRepoPaths();
+      
+        console.log(
+          `Setting up worktree for base path: ${repoBasePath}, repo: ${repoName}`
+        );
+      
+        const worktree = await createWorktree({
+          repoBasePath,
+          repoName,
+          branchName: `ticket-${ticketId}`,
+          baseBranch: "main",
+        });
+      
+        console.log(`Switched to worktree at path: ${worktree.worktreePath}`);
+        process.chdir(worktree.worktreePath);
+      
+        await setupEnvironment({ cwd: worktree.worktreePath });
+        console.log(`Environment set up at path: ${worktree.worktreePath}`);
+      
+        const userPrompt = implementationPlanPrompt(ticketId, commentBody, worktree.worktreePath);
+        console.log(userPrompt);
 
       await this.createThought(
-        agentSessionId,
+        agentSession.id,
         "Analyzing the implementation plan and preparing to execute..."
       );
 
       const result = await executePrompt(userPrompt, {
         onText: async (text) => {
-          await this.createThought(agentSessionId, text);
+          await this.createThought(agentSession.id, text);
         },
         onToolUse: async (toolName, input) => {
           await this.createAction(
-            agentSessionId,
+            agentSession.id,
             toolName,
             JSON.stringify(input, null, 2)
           );
@@ -160,12 +204,12 @@ export class AgentClient {
 
       if (result.success) {
         await this.createResponse(
-          agentSessionId,
+          agentSession.id,
           `Implementation complete!\n\n${result.result}`
         );
       } else {
         await this.createError(
-          agentSessionId,
+          agentSession.id,
           `Implementation encountered issues:\n${result.errors?.join("\n")}`
         );
       }
@@ -174,7 +218,7 @@ export class AgentClient {
         error instanceof Error ? error.message : "Unknown error"
       }`;
       console.error(errorMessage, error);
-      await this.createError(agentSessionId, errorMessage);
+      await this.createError(agentSession.id, errorMessage);
     }
   }
 
