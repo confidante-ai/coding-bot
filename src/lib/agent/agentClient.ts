@@ -1,14 +1,14 @@
 import { LinearClient, LinearDocument as L } from "@linear/sdk";
-import { query, SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
-import { Content } from "../types.js";
+import { query, type SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { Content } from "../types.js";
 import {
   createWorktree,
   getRepoPaths,
   setupEnvironment,
 } from "../workflow/index.js";
 import { checkCapabilitiesPrompt, questionPrompt } from "./prompt.js";
-import { AgentSessionEventWebhookPayload } from "@linear/sdk/webhooks";
-import { type InteractionType } from "../session/sessionRegistry.js";
+import type { AgentSessionEventWebhookPayload } from "@linear/sdk/webhooks";
+import type { InteractionType } from "../session/sessionRegistry.js";
 
 /**
  * Simplified comment interface for previous comments context.
@@ -44,7 +44,7 @@ export async function executePrompt(
   callbacks: AgentCallbacks,
   tools?: string[]
 ): Promise<ExecutePromptResult> {
-  const cwd = process.env.REPO_BASE_PATH || process.cwd();
+  const cwd = process.cwd();
   console.log(`Executing prompt in directory: ${cwd}`);
 
   const agentQuery = query({
@@ -167,7 +167,6 @@ export class AgentClient {
       // Set ticket status to "In Progress" before starting work
       await this.setTicketStatus(ticketId, "In Progress");
 
-      const issue = await this.linearClient.issue(ticketId);
       console.log(`Processing ticket: ${ticketId}...`);
       const { repoBasePath, repoName } = getRepoPaths();
 
@@ -209,7 +208,7 @@ export class AgentClient {
         },
         onSystemInit: (tools) => {
           console.log(
-            `Claude Agent initialized with tools: ${tools.join(", ")}`
+            `Claude Agent initialized with tools: ${tools.filter((tool) => tool.indexOf("mcp_") === -1).join(", ")}`
           );
         },
       });
