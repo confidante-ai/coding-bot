@@ -8,7 +8,7 @@ import {
 } from "../workflow/index.js";
 import { checkCapabilitiesPrompt, questionPrompt } from "./prompt.js";
 import type { AgentSessionEventWebhookPayload } from "@linear/sdk/webhooks";
-import type { InteractionType } from "../session/sessionRegistry.js";
+import { sessionRegistry, type InteractionType } from "../session/sessionRegistry.js";
 
 /**
  * Simplified comment interface for previous comments context.
@@ -42,7 +42,8 @@ export interface ExecutePromptResult {
 export async function executePrompt(
   userPrompt: string,
   callbacks: AgentCallbacks,
-  tools?: string[]
+  tools?: string[],
+  abortController?: AbortController
 ): Promise<ExecutePromptResult> {
   const cwd = process.cwd();
   console.log(`Executing prompt in directory: ${cwd}`);
@@ -57,62 +58,78 @@ export async function executePrompt(
       settingSources: ["project", "user"],
       tools: tools ? tools : { type: "preset", preset: "claude_code" },
       includePartialMessages: false,
+      abortController,
     },
   });
 
   let lastResult: SDKResultMessage | null = null;
 
-  for await (const message of agentQuery) {
-    switch (message.type) {
-      case "assistant": {
-        type ContentBlock = {
-          type: string;
-          text?: string;
-          name?: string;
-          input?: unknown;
-        };
-        const content = message.message.content as ContentBlock[];
-
-        // Handle text content
-        const textContent = content
-          .filter(
-            (block): block is ContentBlock & { type: "text"; text: string } =>
-              block.type === "text" && typeof block.text === "string"
-          )
-          .map((block) => block.text)
-          .join("\n");
-
-        if (textContent) {
-          await callbacks.onText(textContent);
-        }
-
-        // Handle tool uses
-        const toolUses = content.filter(
-          (
-            block
-          ): block is ContentBlock & {
-            type: "tool_use";
-            name: string;
-            input: unknown;
-          } => block.type === "tool_use" && typeof block.name === "string"
-        );
-
-        for (const toolUse of toolUses) {
-          await callbacks.onToolUse(toolUse.name, toolUse.input);
-        }
-        break;
+  try {
+    for await (const message of agentQuery) {
+      // Check if aborted between messages
+      if (abortController?.signal.aborted) {
+        console.log("Execution aborted by signal");
+        return { success: false, errors: ["Execution stopped as requested"] };
       }
 
-      case "result":
-        lastResult = message;
-        break;
+      switch (message.type) {
+        case "assistant": {
+          type ContentBlock = {
+            type: string;
+            text?: string;
+            name?: string;
+            input?: unknown;
+          };
+          const content = message.message.content as ContentBlock[];
 
-      case "system":
-        if (message.subtype === "init") {
-          await callbacks.onSystemInit(message.tools);
+          // Handle text content
+          const textContent = content
+            .filter(
+              (block): block is ContentBlock & { type: "text"; text: string } =>
+                block.type === "text" && typeof block.text === "string"
+            )
+            .map((block) => block.text)
+            .join("\n");
+
+          if (textContent) {
+            await callbacks.onText(textContent);
+          }
+
+          // Handle tool uses
+          const toolUses = content.filter(
+            (
+              block
+            ): block is ContentBlock & {
+              type: "tool_use";
+              name: string;
+              input: unknown;
+            } => block.type === "tool_use" && typeof block.name === "string"
+          );
+
+          for (const toolUse of toolUses) {
+            await callbacks.onToolUse(toolUse.name, toolUse.input);
+          }
+          break;
         }
-        break;
+
+        case "result":
+          lastResult = message;
+          break;
+
+        case "system":
+          if (message.subtype === "init") {
+            await callbacks.onSystemInit(message.tools);
+          }
+          break;
+      }
     }
+  } catch (error) {
+    // Handle AbortError
+    if (error instanceof Error && error.name === "AbortError") {
+      console.log("Execution aborted via AbortError");
+      return { success: false, errors: ["Execution stopped as requested"] };
+    }
+    throw error;
   }
 
   if (!lastResult) {
@@ -161,9 +178,19 @@ export class AgentClient {
   private async handleIssueAssignment(
     agentSession: AgentSessionEventWebhookPayload["agentSession"]
   ): Promise<void> {
-    try {
-      const ticketId = agentSession.issue?.identifier || "";
+    const ticketId = agentSession.issue?.identifier || "";
+    const abortController = new AbortController();
 
+    // Register session before work begins
+    sessionRegistry.register({
+      sessionId: agentSession.id,
+      ticketId,
+      abortController,
+      startedAt: new Date(),
+      interactionType: "issue_assignment",
+    });
+
+    try {
       // Set ticket status to "In Progress" before starting work
       await this.setTicketStatus(ticketId, "In Progress");
 
@@ -181,6 +208,9 @@ export class AgentClient {
         baseBranch: "main",
       });
 
+      // Update session with worktree path
+      sessionRegistry.updateSessionWorktree(agentSession.id, worktree.worktreePath);
+
       console.log(`Switched to worktree at path: ${worktree.worktreePath}`);
       process.chdir(worktree.worktreePath);
 
@@ -195,23 +225,28 @@ export class AgentClient {
         "Analyzing the implementation plan and preparing to execute..."
       );
 
-      const result = await executePrompt(userPrompt, {
-        onText: async (text) => {
-          await this.createThought(agentSession.id, text);
+      const result = await executePrompt(
+        userPrompt,
+        {
+          onText: async (text) => {
+            await this.createThought(agentSession.id, text);
+          },
+          onToolUse: async (toolName, input) => {
+            await this.createAction(
+              agentSession.id,
+              toolName,
+              JSON.stringify(input, null, 2)
+            );
+          },
+          onSystemInit: (tools) => {
+            console.log(
+              `Claude Agent initialized with tools: ${tools.filter((tool) => tool.indexOf("mcp_") === -1).join(", ")}`
+            );
+          },
         },
-        onToolUse: async (toolName, input) => {
-          await this.createAction(
-            agentSession.id,
-            toolName,
-            JSON.stringify(input, null, 2)
-          );
-        },
-        onSystemInit: (tools) => {
-          console.log(
-            `Claude Agent initialized with tools: ${tools.filter((tool) => tool.indexOf("mcp_") === -1).join(", ")}`
-          );
-        },
-      });
+        undefined,
+        abortController
+      );
 
       if (result.success) {
         // Set ticket status to "Done" on successful completion
@@ -233,6 +268,9 @@ export class AgentClient {
       }`;
       console.error(errorMessage, error);
       await this.createError(agentSession.id, errorMessage);
+    } finally {
+      // Clean up session from registry
+      sessionRegistry.unregister(agentSession.id);
     }
   }
 
@@ -243,8 +281,19 @@ export class AgentClient {
     agentSession: AgentSessionEventWebhookPayload["agentSession"],
     previousComments?: PreviousComment[]
   ): Promise<void> {
+    const ticketId = agentSession.issue?.identifier || "";
+    const abortController = new AbortController();
+
+    // Register session before work begins
+    sessionRegistry.register({
+      sessionId: agentSession.id,
+      ticketId,
+      abortController,
+      startedAt: new Date(),
+      interactionType: "question",
+    });
+
     try {
-      const ticketId = agentSession.issue?.identifier || "";
       console.log(`Handling question for ticket: ${ticketId}`);
 
       // Extract the question from the comment
@@ -292,7 +341,8 @@ export class AgentClient {
             );
           },
         },
-        ["read", "grep", "glob", "bash"]
+        ["read", "grep", "glob", "bash"],
+        abortController
       );
 
       if (result.success) {
@@ -313,6 +363,9 @@ export class AgentClient {
       }`;
       console.error(errorMessage, error);
       await this.createError(agentSession.id, errorMessage);
+    } finally {
+      // Clean up session from registry
+      sessionRegistry.unregister(agentSession.id);
     }
   }
 

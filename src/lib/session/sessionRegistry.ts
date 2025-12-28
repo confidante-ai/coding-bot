@@ -68,6 +68,34 @@ class SessionRegistry {
   get size(): number {
     return this.sessions.size;
   }
+
+  /**
+   * Update the worktree path for a session.
+   */
+  updateSessionWorktree(sessionId: string, worktreePath: string): boolean {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      session.worktreePath = worktreePath;
+      console.log(`Session ${sessionId} worktree updated: ${worktreePath}`);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Abort a running session by triggering its abort controller.
+   * Returns true if the session was found and aborted.
+   */
+  abortSession(sessionId: string): boolean {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      session.abortController.abort();
+      console.log(`Session ${sessionId} aborted`);
+      return true;
+    }
+    console.log(`Session ${sessionId} not found for abort`);
+    return false;
+  }
 }
 
 // Export a singleton instance
