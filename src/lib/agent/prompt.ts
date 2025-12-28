@@ -30,4 +30,4 @@ export const commentPrompt = (
   `The user has added the following comment to the Linear ticket ${ticketId}:\n\n"${commentBody}"\n\nRespond to this comment appropriately, considering the current state of the code in the worktree located at ${worktreePath}.`;
 
 export const checkCapabilitiesPrompt = () =>
-  `List the tools, mcp servers and skills you have access to for implementing Linear tickets. Provide a brief description of each capability.`;
+  `List the MCP servers, skills and tools you have access to for implementing Linear tickets. Provide a brief description of each capability.`;

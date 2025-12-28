@@ -1,13 +1,13 @@
 import { LinearClient, LinearDocument as L } from "@linear/sdk";
-import { query, SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
-import { Content } from "../types.js";
+import { query, type SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { Content } from "../types.js";
 import {
   createWorktree,
   getRepoPaths,
   setupEnvironment,
 } from "../workflow/index.js";
 import { checkCapabilitiesPrompt } from "./prompt.js";
-import { AgentSessionEventWebhookPayload } from "@linear/sdk/webhooks";
+import type { AgentSessionEventWebhookPayload } from "@linear/sdk/webhooks";
 
 /**
  * Callbacks for handling agent output during prompt execution.
@@ -34,7 +34,7 @@ export async function executePrompt(
   userPrompt: string,
   callbacks: AgentCallbacks
 ): Promise<ExecutePromptResult> {
-  const cwd = process.env.REPO_BASE_PATH || process.cwd();
+  const cwd = process.cwd();
   console.log(`Executing prompt in directory: ${cwd}`);
 
   const agentQuery = query({
@@ -42,15 +42,16 @@ export async function executePrompt(
     options: {
       cwd,
       systemPrompt: { type: "preset", preset: "claude_code" },
-      model: process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514",
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
-      maxTurns: 50,
       settingSources: ["project", "user"],
       tools: { type: "preset", preset: "claude_code" },
       includePartialMessages: false,
     },
   });
+
+  const mcpStatus = await agentQuery.mcpServerStatus();
+  console.log("MCP Server Status:", mcpStatus);
 
   let lastResult: SDKResultMessage | null = null;
 
@@ -140,28 +141,10 @@ export class AgentClient {
   ): Promise<void> {
     try {
       const ticketId = agentSession.issue?.identifier || "";
+      console.log(`Fetching issue for ticket ID: ${ticketId}`);
       const issue = await this.linearClient.issue(ticketId);
-      console.log(`Fetched issue for ticket ID: ${ticketId}`);
-      console.dir(issue, { depth: null });
       const issueTitle = issue.title;
-
-      const comments = await issue.comments();
-      console.log(`Fetched comments for ticket ID: ${ticketId}`);
-      console.dir(comments, { depth: null });
-
-      const attachments = await issue.attachments();
-      console.log(`Fetched attachments for ticket ID: ${ticketId}`);
-      console.dir(attachments, { depth: null });
-
-      const latestComment = comments.nodes.sort((a, b) =>
-        a.createdAt < b.createdAt ? 1 : -1
-      )[0];
-      const commentBody =
-        comments.nodes[0].body ||
-        latestComment?.documentContent?.content ||
-        latestComment.body ||
-        issue.description ||
-        issueTitle;
+      const commentBody = issue.description || issueTitle;
 
       console.log(`Processing ticket: ${ticketId}...`);
 
