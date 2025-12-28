@@ -28,6 +28,18 @@ export interface WorktreeResult {
   created: boolean;
 }
 
+export function getRepoPaths(): { repoBasePath: string; repoName: string } {
+  const repoBasePath =
+    process.env.REPO_BASE_PATH || path.dirname(process.cwd());
+  const repoBaseName = process.env.REPO_NAME || path.basename(process.cwd());
+  const repoName =
+    repoBaseName.indexOf("/") !== -1
+      ? repoBaseName.split("/")[1]
+      : repoBaseName;
+
+  return { repoBasePath, repoName };
+}
+
 /**
  * Create a git worktree for isolated development.
  * The worktree allows parallel work on multiple branches without affecting the main checkout.

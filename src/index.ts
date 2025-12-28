@@ -7,6 +7,7 @@ import { CLIClient } from "./lib/agent/agentClient.js";
 import {
   cleanupWorktree,
   createWorktree,
+  getRepoPaths,
 } from "./lib/workflow/worktreeLifecycle.js";
 import { setupEnvironment } from "./lib/workflow/index.js";
 import { implementationPrompt } from "./lib/agent/prompt.js";
@@ -52,18 +53,6 @@ async function runPrompt(args: string[]): Promise<void> {
   await client.executePrompt(prompt);
 }
 
-function getRepoPaths(): { repoBasePath: string; repoName: string } {
-  const repoBasePath =
-    process.env.REPO_BASE_PATH || path.dirname(process.cwd());
-  const repoBaseName = process.env.REPO_NAME || path.basename(process.cwd());
-  const repoName =
-    repoBaseName.indexOf("/") !== -1
-      ? repoBaseName.split("/")[1]
-      : repoBaseName;
-
-  return { repoBasePath, repoName };
-}
-
 function getTicketNumber(args: string[]): string {
   if (!args.includes("--ticket")) {
     console.error("Error: No ticket ID provided");
@@ -97,7 +86,7 @@ async function runImplement(args: string[]): Promise<void> {
   console.log(`Switched to worktree at path: ${worktree.worktreePath}`);
   process.chdir(worktree.worktreePath);
 
-  const environment = await setupEnvironment({ cwd: worktree.worktreePath });
+  await setupEnvironment({ cwd: worktree.worktreePath });
   console.log(`Environment set up at path: ${worktree.worktreePath}`);
 
   const prompt = implementationPrompt(ticketId, worktree.worktreePath);
