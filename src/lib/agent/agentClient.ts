@@ -51,10 +51,8 @@ export async function executePrompt(
     options: {
       cwd,
       systemPrompt: { type: "preset", preset: "claude_code" },
-      model: process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514",
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
-      maxTurns: 50,
       settingSources: ["project", "user"],
       tools: { type: "preset", preset: "claude_code" },
       includePartialMessages: false,
@@ -169,19 +167,7 @@ export class AgentClient {
       await this.setTicketStatus(ticketId, "In Progress");
 
       const issue = await this.linearClient.issue(ticketId);
-      console.log(`Fetched issue for ticket ID: ${ticketId}`);
-      console.dir(issue, { depth: null });
-
-      const comments = await issue.comments();
-      console.log(`Fetched comments for ticket ID: ${ticketId}`);
-      console.dir(comments, { depth: null });
-
-      const attachments = await issue.attachments();
-      console.log(`Fetched attachments for ticket ID: ${ticketId}`);
-      console.dir(attachments, { depth: null });
-
       console.log(`Processing ticket: ${ticketId}...`);
-
       const { repoBasePath, repoName } = getRepoPaths();
 
       console.log(
@@ -270,9 +256,8 @@ export class AgentClient {
       }
 
       // Build context from previous comments
-      const previousContext = previousComments
-        ?.map((c) => `Comment: ${c.body}`)
-        .join("\n\n") || "";
+      const previousContext =
+        previousComments?.map((c) => `Comment: ${c.body}`).join("\n\n") || "";
 
       // Set CWD to main repo for read-only access
       const { repoBasePath, repoName } = getRepoPaths();
@@ -309,7 +294,8 @@ export class AgentClient {
       if (result.success) {
         await this.createResponse(
           agentSession.id,
-          result.result || "I've analyzed the codebase and provided my answer above."
+          result.result ||
+            "I've analyzed the codebase and provided my answer above."
         );
       } else {
         await this.createError(
@@ -400,9 +386,7 @@ export class AgentClient {
         await issue.update({ stateId: targetState.id });
         console.log(`Set ticket ${ticketId} to ${statusName}`);
       } else {
-        console.warn(
-          `Status "${statusName}" not found for ticket ${ticketId}`
-        );
+        console.warn(`Status "${statusName}" not found for ticket ${ticketId}`);
       }
     } catch (error) {
       console.error(
