@@ -164,6 +164,10 @@ export class AgentClient {
   ): Promise<void> {
     try {
       const ticketId = agentSession.issue?.identifier || "";
+
+      // Set ticket status to "In Progress" before starting work
+      await this.setTicketStatus(ticketId, "In Progress");
+
       const issue = await this.linearClient.issue(ticketId);
       console.log(`Fetched issue for ticket ID: ${ticketId}`);
       console.dir(issue, { depth: null });
@@ -224,6 +228,9 @@ export class AgentClient {
       });
 
       if (result.success) {
+        // Set ticket status to "Done" on successful completion
+        await this.setTicketStatus(ticketId, "Done");
+
         await this.createResponse(
           agentSession.id,
           `Implementation complete!\n\n${result.result}`
@@ -371,6 +378,39 @@ export class AgentClient {
         body,
       } as Content,
     });
+  }
+
+  /**
+   * Set the ticket status to a specified state (e.g., "In Progress", "Done").
+   */
+  private async setTicketStatus(
+    ticketId: string,
+    statusName: string
+  ): Promise<void> {
+    try {
+      const issue = await this.linearClient.issue(ticketId);
+      const team = await issue.team;
+
+      const states = await team?.states();
+      const targetState = states?.nodes.find(
+        (state) => state.name.toLowerCase() === statusName.toLowerCase()
+      );
+
+      if (targetState) {
+        await issue.update({ stateId: targetState.id });
+        console.log(`Set ticket ${ticketId} to ${statusName}`);
+      } else {
+        console.warn(
+          `Status "${statusName}" not found for ticket ${ticketId}`
+        );
+      }
+    } catch (error) {
+      console.error(
+        `Failed to set ticket status: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
   }
 }
 
