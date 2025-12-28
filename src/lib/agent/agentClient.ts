@@ -6,8 +6,17 @@ import {
   getRepoPaths,
   setupEnvironment,
 } from "../workflow/index.js";
-import { checkCapabilitiesPrompt } from "./prompt.js";
+import { checkCapabilitiesPrompt, questionPrompt } from "./prompt.js";
 import { AgentSessionEventWebhookPayload } from "@linear/sdk/webhooks";
+import { type InteractionType } from "../session/sessionRegistry.js";
+
+/**
+ * Simplified comment interface for previous comments context.
+ */
+export interface PreviousComment {
+  body: string;
+  userId?: string | null;
+}
 
 /**
  * Callbacks for handling agent output during prompt execution.
@@ -133,9 +142,24 @@ export class AgentClient {
   }
 
   /**
-   * Handle a user prompt by processing it through the Claude Agent SDK.
+   * Handle a user prompt by routing to the appropriate handler based on interaction type.
    */
   public async handleUserPrompt(
+    agentSession: AgentSessionEventWebhookPayload["agentSession"],
+    interactionType: InteractionType,
+    previousComments?: PreviousComment[]
+  ): Promise<void> {
+    if (interactionType === "question") {
+      await this.handleQuestion(agentSession, previousComments);
+    } else {
+      await this.handleIssueAssignment(agentSession);
+    }
+  }
+
+  /**
+   * Handle an issue assignment - create worktree, setup environment, and implement.
+   */
+  private async handleIssueAssignment(
     agentSession: AgentSessionEventWebhookPayload["agentSession"]
   ): Promise<void> {
     try {
@@ -143,7 +167,6 @@ export class AgentClient {
       const issue = await this.linearClient.issue(ticketId);
       console.log(`Fetched issue for ticket ID: ${ticketId}`);
       console.dir(issue, { depth: null });
-      const issueTitle = issue.title;
 
       const comments = await issue.comments();
       console.log(`Fetched comments for ticket ID: ${ticketId}`);
@@ -152,16 +175,6 @@ export class AgentClient {
       const attachments = await issue.attachments();
       console.log(`Fetched attachments for ticket ID: ${ticketId}`);
       console.dir(attachments, { depth: null });
-
-      const latestComment = comments.nodes.sort((a, b) =>
-        a.createdAt < b.createdAt ? 1 : -1
-      )[0];
-      const commentBody =
-        comments.nodes[0].body ||
-        latestComment?.documentContent?.content ||
-        latestComment.body ||
-        issue.description ||
-        issueTitle;
 
       console.log(`Processing ticket: ${ticketId}...`);
 
@@ -219,6 +232,82 @@ export class AgentClient {
         await this.createError(
           agentSession.id,
           `Implementation encountered issues:\n${result.errors?.join("\n")}`
+        );
+      }
+    } catch (error) {
+      const errorMessage = `Agent error: ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`;
+      console.error(errorMessage, error);
+      await this.createError(agentSession.id, errorMessage);
+    }
+  }
+
+  /**
+   * Handle a question in a comment thread - answer without creating a worktree.
+   */
+  private async handleQuestion(
+    agentSession: AgentSessionEventWebhookPayload["agentSession"],
+    previousComments?: PreviousComment[]
+  ): Promise<void> {
+    try {
+      const ticketId = agentSession.issue?.identifier || "";
+      console.log(`Handling question for ticket: ${ticketId}`);
+
+      // Extract the question from the comment
+      const question = agentSession.comment?.body || "";
+      if (!question) {
+        console.error("No question found in comment");
+        await this.createError(agentSession.id, "No question found in comment");
+        return;
+      }
+
+      // Build context from previous comments
+      const previousContext = previousComments
+        ?.map((c) => `Comment: ${c.body}`)
+        .join("\n\n") || "";
+
+      // Set CWD to main repo for read-only access
+      const { repoBasePath, repoName } = getRepoPaths();
+      const mainRepoPath = `${repoBasePath}/${repoName}`;
+      process.chdir(mainRepoPath);
+      console.log(`Set working directory to main repo: ${mainRepoPath}`);
+
+      await this.createThought(
+        agentSession.id,
+        "Analyzing your question and searching the codebase..."
+      );
+
+      const userPrompt = questionPrompt(question, previousContext);
+      console.log(userPrompt);
+
+      const result = await executePrompt(userPrompt, {
+        onText: async (text) => {
+          await this.createThought(agentSession.id, text);
+        },
+        onToolUse: async (toolName, input) => {
+          await this.createAction(
+            agentSession.id,
+            toolName,
+            JSON.stringify(input, null, 2)
+          );
+        },
+        onSystemInit: (tools) => {
+          console.log(
+            `Claude Agent initialized with tools: ${tools.join(", ")}`
+          );
+        },
+      });
+
+      if (result.success) {
+        await this.createResponse(
+          agentSession.id,
+          result.result || "I've analyzed the codebase and provided my answer above."
+        );
+      } else {
+        await this.createError(
+          agentSession.id,
+          `Error answering question:\n${result.errors?.join("\n")}`
         );
       }
     } catch (error) {

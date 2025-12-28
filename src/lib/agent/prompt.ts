@@ -31,3 +31,14 @@ export const commentPrompt = (
 
 export const checkCapabilitiesPrompt = () =>
   `List the tools, mcp servers and skills you have access to for implementing Linear tickets. Provide a brief description of each capability.`;
+
+export const questionPrompt = (
+  question: string,
+  previousContext: string
+) =>
+  `The user is asking a question about the codebase. Answer their question using the available read-only tools (Read, Grep, Glob, and git log via Bash).
+
+${previousContext ? `## Previous conversation context:\n${previousContext}\n\n` : ""}## User's question:
+${question}
+
+Provide a clear, helpful answer based on the codebase and git history. Do not make any changes to the code.`;

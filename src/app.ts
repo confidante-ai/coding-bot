@@ -9,7 +9,7 @@ import {
   handleOAuthCallback,
   getOAuthToken,
 } from "./lib/oauth.js";
-import { AgentClient } from "./lib/agent/agentClient.js";
+import { AgentClient, PreviousComment } from "./lib/agent/agentClient.js";
 import { type InteractionType } from "./lib/session/sessionRegistry.js";
 
 /**
@@ -115,8 +115,14 @@ async function handleAgentSessionEvent(
     return;
   }
 
+  const interactionType = getInteractionType(webhook);
   const agentClient = new AgentClient(token);
-  await agentClient.handleUserPrompt(webhook.agentSession);
+
+  await agentClient.handleUserPrompt(
+    webhook.agentSession,
+    interactionType,
+    (webhook.previousComments as PreviousComment[] | undefined) ?? undefined // Pass for context in questions
+  );
 }
 
 export default app;
