@@ -1,13 +1,22 @@
 import { LinearClient, LinearDocument as L } from "@linear/sdk";
-import { query, SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
-import { Content } from "../types.js";
+import { query, type SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { Content } from "../types.js";
 import {
   createWorktree,
   getRepoPaths,
   setupEnvironment,
 } from "../workflow/index.js";
-import { checkCapabilitiesPrompt } from "./prompt.js";
-import { AgentSessionEventWebhookPayload } from "@linear/sdk/webhooks";
+import { checkCapabilitiesPrompt, questionPrompt } from "./prompt.js";
+import type { AgentSessionEventWebhookPayload } from "@linear/sdk/webhooks";
+import type { InteractionType } from "../session/sessionRegistry.js";
+
+/**
+ * Simplified comment interface for previous comments context.
+ */
+export interface PreviousComment {
+  body: string;
+  userId?: string | null;
+}
 
 /**
  * Callbacks for handling agent output during prompt execution.
@@ -32,9 +41,10 @@ export interface ExecutePromptResult {
  */
 export async function executePrompt(
   userPrompt: string,
-  callbacks: AgentCallbacks
+  callbacks: AgentCallbacks,
+  tools?: string[]
 ): Promise<ExecutePromptResult> {
-  const cwd = process.env.REPO_BASE_PATH || process.cwd();
+  const cwd = process.cwd();
   console.log(`Executing prompt in directory: ${cwd}`);
 
   const agentQuery = query({
@@ -42,12 +52,10 @@ export async function executePrompt(
     options: {
       cwd,
       systemPrompt: { type: "preset", preset: "claude_code" },
-      model: process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514",
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
-      maxTurns: 50,
       settingSources: ["project", "user"],
-      tools: { type: "preset", preset: "claude_code" },
+      tools: tools ? tools : { type: "preset", preset: "claude_code" },
       includePartialMessages: false,
     },
   });
@@ -133,38 +141,33 @@ export class AgentClient {
   }
 
   /**
-   * Handle a user prompt by processing it through the Claude Agent SDK.
+   * Handle a user prompt by routing to the appropriate handler based on interaction type.
    */
   public async handleUserPrompt(
+    agentSession: AgentSessionEventWebhookPayload["agentSession"],
+    interactionType: InteractionType,
+    previousComments?: PreviousComment[]
+  ): Promise<void> {
+    if (interactionType === "question") {
+      await this.handleQuestion(agentSession, previousComments);
+    } else {
+      await this.handleIssueAssignment(agentSession);
+    }
+  }
+
+  /**
+   * Handle an issue assignment - create worktree, setup environment, and implement.
+   */
+  private async handleIssueAssignment(
     agentSession: AgentSessionEventWebhookPayload["agentSession"]
   ): Promise<void> {
     try {
       const ticketId = agentSession.issue?.identifier || "";
-      const issue = await this.linearClient.issue(ticketId);
-      console.log(`Fetched issue for ticket ID: ${ticketId}`);
-      console.dir(issue, { depth: null });
-      const issueTitle = issue.title;
 
-      const comments = await issue.comments();
-      console.log(`Fetched comments for ticket ID: ${ticketId}`);
-      console.dir(comments, { depth: null });
-
-      const attachments = await issue.attachments();
-      console.log(`Fetched attachments for ticket ID: ${ticketId}`);
-      console.dir(attachments, { depth: null });
-
-      const latestComment = comments.nodes.sort((a, b) =>
-        a.createdAt < b.createdAt ? 1 : -1
-      )[0];
-      const commentBody =
-        comments.nodes[0].body ||
-        latestComment?.documentContent?.content ||
-        latestComment.body ||
-        issue.description ||
-        issueTitle;
+      // Set ticket status to "In Progress" before starting work
+      await this.setTicketStatus(ticketId, "In Progress");
 
       console.log(`Processing ticket: ${ticketId}...`);
-
       const { repoBasePath, repoName } = getRepoPaths();
 
       console.log(
@@ -205,12 +208,15 @@ export class AgentClient {
         },
         onSystemInit: (tools) => {
           console.log(
-            `Claude Agent initialized with tools: ${tools.join(", ")}`
+            `Claude Agent initialized with tools: ${tools.filter((tool) => tool.indexOf("mcp_") === -1).join(", ")}`
           );
         },
       });
 
       if (result.success) {
+        // Set ticket status to "Done" on successful completion
+        await this.setTicketStatus(ticketId, "Done");
+
         await this.createResponse(
           agentSession.id,
           `Implementation complete!\n\n${result.result}`
@@ -219,6 +225,86 @@ export class AgentClient {
         await this.createError(
           agentSession.id,
           `Implementation encountered issues:\n${result.errors?.join("\n")}`
+        );
+      }
+    } catch (error) {
+      const errorMessage = `Agent error: ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`;
+      console.error(errorMessage, error);
+      await this.createError(agentSession.id, errorMessage);
+    }
+  }
+
+  /**
+   * Handle a question in a comment thread - answer without creating a worktree.
+   */
+  private async handleQuestion(
+    agentSession: AgentSessionEventWebhookPayload["agentSession"],
+    previousComments?: PreviousComment[]
+  ): Promise<void> {
+    try {
+      const ticketId = agentSession.issue?.identifier || "";
+      console.log(`Handling question for ticket: ${ticketId}`);
+
+      // Extract the question from the comment
+      const question = agentSession.comment?.body || "";
+      if (!question) {
+        console.error("No question found in comment");
+        await this.createError(agentSession.id, "No question found in comment");
+        return;
+      }
+
+      // Build context from previous comments
+      const previousContext =
+        previousComments?.map((c) => `Comment: ${c.body}`).join("\n\n") || "";
+
+      // Set CWD to main repo for read-only access
+      const { repoBasePath, repoName } = getRepoPaths();
+      const mainRepoPath = `${repoBasePath}/${repoName}`;
+      process.chdir(mainRepoPath);
+      console.log(`Set working directory to main repo: ${mainRepoPath}`);
+
+      await this.createThought(
+        agentSession.id,
+        "Analyzing your question and searching the codebase..."
+      );
+
+      const userPrompt = questionPrompt(question, previousContext);
+      console.log(userPrompt);
+
+      const result = await executePrompt(
+        userPrompt,
+        {
+          onText: async (text) => {
+            await this.createThought(agentSession.id, text);
+          },
+          onToolUse: async (toolName, input) => {
+            await this.createAction(
+              agentSession.id,
+              toolName,
+              JSON.stringify(input, null, 2)
+            );
+          },
+          onSystemInit: (tools) => {
+            console.log(
+              `Claude Agent initialized with tools: ${tools.join(", ")}`
+            );
+          },
+        },
+        ["read", "grep", "glob", "bash"]
+      );
+
+      if (result.success) {
+        await this.createResponse(
+          agentSession.id,
+          result.result ||
+            "I've analyzed the codebase and provided my answer above."
+        );
+      } else {
+        await this.createError(
+          agentSession.id,
+          `Error answering question:\n${result.errors?.join("\n")}`
         );
       }
     } catch (error) {
@@ -282,6 +368,37 @@ export class AgentClient {
         body,
       } as Content,
     });
+  }
+
+  /**
+   * Set the ticket status to a specified state (e.g., "In Progress", "Done").
+   */
+  private async setTicketStatus(
+    ticketId: string,
+    statusName: string
+  ): Promise<void> {
+    try {
+      const issue = await this.linearClient.issue(ticketId);
+      const team = await issue.team;
+
+      const states = await team?.states();
+      const targetState = states?.nodes.find(
+        (state) => state.name.toLowerCase() === statusName.toLowerCase()
+      );
+
+      if (targetState) {
+        await issue.update({ stateId: targetState.id });
+        console.log(`Set ticket ${ticketId} to ${statusName}`);
+      } else {
+        console.warn(`Status "${statusName}" not found for ticket ${ticketId}`);
+      }
+    } catch (error) {
+      console.error(
+        `Failed to set ticket status: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
   }
 }
 

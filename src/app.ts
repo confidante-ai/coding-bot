@@ -9,7 +9,27 @@ import {
   handleOAuthCallback,
   getOAuthToken,
 } from "./lib/oauth.js";
-import { AgentClient } from "./lib/agent/agentClient.js";
+import { AgentClient, PreviousComment } from "./lib/agent/agentClient.js";
+import { type InteractionType } from "./lib/session/sessionRegistry.js";
+
+/**
+ * Determine the interaction type from the webhook payload.
+ * Questions have previousComments or a comment, while issue assignments do not.
+ */
+function getInteractionType(
+  payload: AgentSessionEventWebhookPayload
+): InteractionType {
+  // If previousComments exists, this is a question in a thread
+  if (payload.previousComments && payload.previousComments.length > 0) {
+    return "question";
+  }
+  // If there's a comment but no previous comments, check if it's a direct question
+  if (payload.agentSession.comment) {
+    return "question";
+  }
+  // Default to issue assignment
+  return "issue_assignment";
+}
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -95,8 +115,14 @@ async function handleAgentSessionEvent(
     return;
   }
 
+  const interactionType = getInteractionType(webhook);
   const agentClient = new AgentClient(token);
-  await agentClient.handleUserPrompt(webhook.agentSession);
+
+  await agentClient.handleUserPrompt(
+    webhook.agentSession,
+    interactionType,
+    (webhook.previousComments as PreviousComment[] | undefined) ?? undefined // Pass for context in questions
+  );
 }
 
 export default app;
