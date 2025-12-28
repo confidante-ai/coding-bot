@@ -6,7 +6,7 @@ import {
   getRepoPaths,
   setupEnvironment,
 } from "../workflow/index.js";
-import { checkCapabilitiesPrompt } from "./prompt.js";
+import { implementationPrompt } from "./prompt.js";
 import type { AgentSessionEventWebhookPayload } from "@linear/sdk/webhooks";
 
 /**
@@ -142,9 +142,6 @@ export class AgentClient {
     try {
       const ticketId = agentSession.issue?.identifier || "";
       console.log(`Fetching issue for ticket ID: ${ticketId}`);
-      const issue = await this.linearClient.issue(ticketId);
-      const issueTitle = issue.title;
-      const commentBody = issue.description || issueTitle;
 
       console.log(`Processing ticket: ${ticketId}...`);
 
@@ -167,7 +164,7 @@ export class AgentClient {
       await setupEnvironment({ cwd: worktree.worktreePath });
       console.log(`Environment set up at path: ${worktree.worktreePath}`);
 
-      const userPrompt = checkCapabilitiesPrompt();
+      const userPrompt = implementationPrompt(ticketId, worktree.worktreePath);
       console.log(userPrompt);
 
       await this.createThought(
@@ -186,9 +183,13 @@ export class AgentClient {
             JSON.stringify(input, null, 2)
           );
         },
-        onSystemInit: (tools) => {
+        onSystemInit: async (tools) => {
+          await this.createThought(
+            agentSession.id,
+            `Claude Agent initialized with tools`
+          );
           console.log(
-            `Claude Agent initialized with tools: ${tools.join(", ")}`
+            `Claude Agent initialized with tools: ${tools.filter((tool) => tool.indexOf("mcp") === -1).join(", ")}`
           );
         },
       });
