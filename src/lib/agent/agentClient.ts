@@ -1,10 +1,13 @@
 import { LinearClient, LinearDocument as L } from "@linear/sdk";
 import { query, SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
 import { Content } from "../types.js";
-import { createWorktree, getRepoPaths, setupEnvironment } from "../workflow/index.js";
-import { implementationPlanPrompt } from "./prompt.js";
+import {
+  createWorktree,
+  getRepoPaths,
+  setupEnvironment,
+} from "../workflow/index.js";
+import { checkCapabilitiesPrompt } from "./prompt.js";
 import { AgentSessionEventWebhookPayload } from "@linear/sdk/webhooks";
-import { title } from "process";
 
 /**
  * Callbacks for handling agent output during prompt execution.
@@ -153,31 +156,36 @@ export class AgentClient {
       const latestComment = comments.nodes.sort((a, b) =>
         a.createdAt < b.createdAt ? 1 : -1
       )[0];
-      const commentBody = comments.nodes[0].body || latestComment?.documentContent?.content || latestComment.body || issue.description || issueTitle;
+      const commentBody =
+        comments.nodes[0].body ||
+        latestComment?.documentContent?.content ||
+        latestComment.body ||
+        issue.description ||
+        issueTitle;
 
       console.log(`Processing ticket: ${ticketId}...`);
 
-        const { repoBasePath, repoName } = getRepoPaths();
-      
-        console.log(
-          `Setting up worktree for base path: ${repoBasePath}, repo: ${repoName}`
-        );
-      
-        const worktree = await createWorktree({
-          repoBasePath,
-          repoName,
-          branchName: `ticket-${ticketId}`,
-          baseBranch: "main",
-        });
-      
-        console.log(`Switched to worktree at path: ${worktree.worktreePath}`);
-        process.chdir(worktree.worktreePath);
-      
-        await setupEnvironment({ cwd: worktree.worktreePath });
-        console.log(`Environment set up at path: ${worktree.worktreePath}`);
-      
-        const userPrompt = implementationPlanPrompt(ticketId, commentBody, worktree.worktreePath);
-        console.log(userPrompt);
+      const { repoBasePath, repoName } = getRepoPaths();
+
+      console.log(
+        `Setting up worktree for base path: ${repoBasePath}, repo: ${repoName}`
+      );
+
+      const worktree = await createWorktree({
+        repoBasePath,
+        repoName,
+        branchName: `ticket-${ticketId}`,
+        baseBranch: "main",
+      });
+
+      console.log(`Switched to worktree at path: ${worktree.worktreePath}`);
+      process.chdir(worktree.worktreePath);
+
+      await setupEnvironment({ cwd: worktree.worktreePath });
+      console.log(`Environment set up at path: ${worktree.worktreePath}`);
+
+      const userPrompt = checkCapabilitiesPrompt();
+      console.log(userPrompt);
 
       await this.createThought(
         agentSession.id,
