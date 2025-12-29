@@ -125,9 +125,10 @@ app.post("/webhook", handler);
 async function handleAgentSessionEvent(
   webhook: AgentSessionEventWebhookPayload
 ): Promise<void> {
+  console.log("Looking up token for organizationId:", webhook.organizationId);
   const token = await getOAuthToken(webhook.organizationId);
   if (!token) {
-    console.error("Linear OAuth token not found");
+    console.error("Linear OAuth token not found for organizationId:", webhook.organizationId);
     return;
   }
 

@@ -34,11 +34,14 @@ export const checkCapabilitiesPrompt = () =>
 
 export const questionPrompt = (
   question: string,
-  previousContext: string
+  previousContext: string,
+  ticketId?: string
 ) =>
   `The user is asking a question about the codebase. Answer their question using the available read-only tools (Read, Grep, Glob, and git log via Bash).
 
 ${previousContext ? `## Previous conversation context:\n${previousContext}\n\n` : ""}## User's question:
 ${question}
+
+${ticketId ? `This question is related to Linear ticket ${ticketId}.\n\n` : ""}
 
 Provide a clear, helpful answer based on the codebase and git history. Do not make any changes to the code.`;
