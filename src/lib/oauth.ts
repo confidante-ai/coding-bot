@@ -1,16 +1,22 @@
 import { Request, Response } from "express";
 import fs from "fs/promises";
 import path from "path";
+import { fileURLToPath } from "node:url";
 import { OAuthTokenResponse, StoredTokenData } from "./types.js";
 
 const TOKENS_DIR = ".tokens";
 const OAUTH_TOKEN_KEY_PREFIX = "linear_oauth_token_";
 
+// Get the project root directory based on this file's location (src/lib/oauth.ts -> project root)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const PROJECT_ROOT = path.resolve(__dirname, "../..");
+
 /**
  * Ensure the tokens directory exists
  */
 async function ensureTokensDir(): Promise<string> {
-  const tokensPath = path.resolve(process.cwd(), TOKENS_DIR);
+  const tokensPath = path.resolve(PROJECT_ROOT, TOKENS_DIR);
   try {
     await fs.mkdir(tokensPath, { recursive: true });
   } catch {
@@ -141,12 +147,14 @@ export async function getOAuthToken(
 ): Promise<string | null> {
   try {
     const tokenPath = getWorkspaceTokenPath(workspaceId);
-    const fullPath = path.resolve(process.cwd(), tokenPath);
+    const fullPath = path.resolve(PROJECT_ROOT, tokenPath);
+    console.log("Looking for token at path:", fullPath);
 
     let storedData: string;
     try {
       storedData = await fs.readFile(fullPath, "utf-8");
-    } catch {
+    } catch (err) {
+      console.error("Failed to read token file:", err);
       return null;
     }
 
@@ -207,7 +215,7 @@ export async function setOAuthTokenData(
 ): Promise<void> {
   await ensureTokensDir();
   const tokenPath = getWorkspaceTokenPath(workspaceId);
-  const fullPath = path.resolve(process.cwd(), tokenPath);
+  const fullPath = path.resolve(PROJECT_ROOT, tokenPath);
   await fs.writeFile(fullPath, JSON.stringify(tokenData, null, 2));
 }
 

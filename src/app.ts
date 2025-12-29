@@ -9,8 +9,8 @@ import {
   handleOAuthCallback,
   getOAuthToken,
 } from "./lib/oauth.js";
-import { AgentClient, PreviousComment } from "./lib/agent/agentClient.js";
-import { type InteractionType } from "./lib/session/sessionRegistry.js";
+import { AgentClient, type PreviousComment } from "./lib/agent/agentClient.js";
+import type { InteractionType } from "./lib/session/sessionRegistry.js";
 
 /**
  * Determine the interaction type from the webhook payload.
@@ -104,9 +104,10 @@ app.post("/webhook", handler);
 async function handleAgentSessionEvent(
   webhook: AgentSessionEventWebhookPayload
 ): Promise<void> {
+  console.log("Looking up token for organizationId:", webhook.organizationId);
   const token = await getOAuthToken(webhook.organizationId);
   if (!token) {
-    console.error("Linear OAuth token not found");
+    console.error("Linear OAuth token not found for organizationId:", webhook.organizationId);
     return;
   }
 

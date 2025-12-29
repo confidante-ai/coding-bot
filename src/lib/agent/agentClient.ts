@@ -148,10 +148,13 @@ export class AgentClient {
     interactionType: InteractionType,
     previousComments?: PreviousComment[]
   ): Promise<void> {
+      const ticketId = agentSession.issue?.identifier || undefined;
     if (interactionType === "question") {
-      await this.handleQuestion(agentSession, previousComments);
+      await this.handleQuestion(agentSession, previousComments, ticketId);
+    } else if (ticketId) {
+      await this.handleIssueAssignment(agentSession, ticketId);
     } else {
-      await this.handleIssueAssignment(agentSession);
+      console.error("No ticket ID found for issue assignment");
     }
   }
 
@@ -159,10 +162,9 @@ export class AgentClient {
    * Handle an issue assignment - create worktree, setup environment, and implement.
    */
   private async handleIssueAssignment(
-    agentSession: AgentSessionEventWebhookPayload["agentSession"]
+    agentSession: AgentSessionEventWebhookPayload["agentSession"], ticketId: string
   ): Promise<void> {
     try {
-      const ticketId = agentSession.issue?.identifier || "";
 
       // Set ticket status to "In Progress" before starting work
       await this.setTicketStatus(ticketId, "In Progress");
@@ -241,10 +243,10 @@ export class AgentClient {
    */
   private async handleQuestion(
     agentSession: AgentSessionEventWebhookPayload["agentSession"],
-    previousComments?: PreviousComment[]
+    previousComments?: PreviousComment[],
+    ticketId?: string
   ): Promise<void> {
     try {
-      const ticketId = agentSession.issue?.identifier || "";
       console.log(`Handling question for ticket: ${ticketId}`);
 
       // Extract the question from the comment
@@ -270,7 +272,7 @@ export class AgentClient {
         "Analyzing your question and searching the codebase..."
       );
 
-      const userPrompt = questionPrompt(question, previousContext);
+      const userPrompt = questionPrompt(question, previousContext, ticketId);
       console.log(userPrompt);
 
       const result = await executePrompt(
@@ -288,11 +290,11 @@ export class AgentClient {
           },
           onSystemInit: (tools) => {
             console.log(
-              `Claude Agent initialized with tools: ${tools.join(", ")}`
+            `Claude Agent initialized with tools: ${tools.filter((tool) => tool.indexOf("mcp_") === -1).join(", ")}`
             );
           },
         },
-        ["read", "grep", "glob", "bash"]
+        ["Read", "Grep", "Glob", "Bash"] // Limit tools for read-only question answering
       );
 
       if (result.success) {
