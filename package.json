@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts",
     "lint:fix": "eslint src --ext .ts --fix",
-    "prepare": "husky"
+    "prepare": "husky",
+    "sessions": "curl -s http://localhost:3000/sessions | jq"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.76",
