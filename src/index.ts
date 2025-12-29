@@ -89,7 +89,7 @@ async function runImplement(args: string[]): Promise<void> {
   await setupEnvironment({ cwd: worktree.worktreePath });
   console.log(`Environment set up at path: ${worktree.worktreePath}`);
 
-  const prompt = implementationPrompt(ticketId, worktree.worktreePath);
+  const prompt = implementationPrompt(ticketId);
   console.log(prompt);
 
   const client = new CLIClient();

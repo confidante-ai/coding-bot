@@ -194,7 +194,7 @@ export class AgentClient {
       await setupEnvironment({ cwd: worktree.worktreePath });
       console.log(`Environment set up at path: ${worktree.worktreePath}`);
 
-      const userPrompt = implementationPrompt(ticketId, worktree.worktreePath);
+      const userPrompt = implementationPrompt(ticketId);
       console.log(userPrompt);
 
       const result = await executePrompt(userPrompt, {
