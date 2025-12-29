@@ -174,9 +174,6 @@ export class AgentClient {
         "Analyzing the implementation plan and preparing to execute..."
       );
 
-      // Set ticket status to "In Progress" before starting work
-      await this.setTicketStatus(ticketId, "In Progress");
-
       console.log(
         `Setting up worktree for base path: ${repoBasePath}, repo: ${repoName}`
       );
@@ -221,9 +218,6 @@ export class AgentClient {
       });
 
       if (result.success) {
-        // Set ticket status to "Done" on successful completion
-        await this.setTicketStatus(ticketId, "Done");
-
         await this.createResponse(
           agentSession.id,
           `Implementation complete!\n\n${result.result}`
