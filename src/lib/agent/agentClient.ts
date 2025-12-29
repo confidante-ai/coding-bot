@@ -148,7 +148,7 @@ export class AgentClient {
     interactionType: InteractionType,
     previousComments?: PreviousComment[]
   ): Promise<void> {
-      const ticketId = agentSession.issue?.identifier || undefined;
+    const ticketId = agentSession.issue?.identifier || undefined;
     if (interactionType === "question") {
       await this.handleQuestion(agentSession, previousComments, ticketId);
     } else if (ticketId) {
@@ -162,15 +162,20 @@ export class AgentClient {
    * Handle an issue assignment - create worktree, setup environment, and implement.
    */
   private async handleIssueAssignment(
-    agentSession: AgentSessionEventWebhookPayload["agentSession"], ticketId: string
+    agentSession: AgentSessionEventWebhookPayload["agentSession"],
+    ticketId: string
   ): Promise<void> {
     try {
+      console.log(`Processing ticket: ${ticketId}...`);
+      const { repoBasePath, repoName } = getRepoPaths();
+
+      await this.createThought(
+        agentSession.id,
+        "Analyzing the implementation plan and preparing to execute..."
+      );
 
       // Set ticket status to "In Progress" before starting work
       await this.setTicketStatus(ticketId, "In Progress");
-
-      console.log(`Processing ticket: ${ticketId}...`);
-      const { repoBasePath, repoName } = getRepoPaths();
 
       console.log(
         `Setting up worktree for base path: ${repoBasePath}, repo: ${repoName}`
@@ -192,11 +197,6 @@ export class AgentClient {
       const userPrompt = checkCapabilitiesPrompt();
       console.log(userPrompt);
 
-      await this.createThought(
-        agentSession.id,
-        "Analyzing the implementation plan and preparing to execute..."
-      );
-
       const result = await executePrompt(userPrompt, {
         onText: async (text) => {
           await this.createThought(agentSession.id, text);
@@ -210,7 +210,9 @@ export class AgentClient {
         },
         onSystemInit: (tools) => {
           console.log(
-            `Claude Agent initialized with tools: ${tools.filter((tool) => tool.indexOf("mcp_") === -1).join(", ")}`
+            `Claude Agent initialized with tools: ${tools
+              .filter((tool) => tool.indexOf("mcp_") === -1)
+              .join(", ")}`
           );
         },
       });
@@ -249,6 +251,11 @@ export class AgentClient {
     try {
       console.log(`Handling question for ticket: ${ticketId}`);
 
+      await this.createThought(
+        agentSession.id,
+        "Analyzing your question and searching the codebase..."
+      );
+
       // Extract the question from the comment
       const question = agentSession.comment?.body || "";
       if (!question) {
@@ -266,11 +273,6 @@ export class AgentClient {
       const mainRepoPath = `${repoBasePath}/${repoName}`;
       process.chdir(mainRepoPath);
       console.log(`Set working directory to main repo: ${mainRepoPath}`);
-
-      await this.createThought(
-        agentSession.id,
-        "Analyzing your question and searching the codebase..."
-      );
 
       const userPrompt = questionPrompt(question, previousContext, ticketId);
       console.log(userPrompt);
@@ -290,7 +292,9 @@ export class AgentClient {
           },
           onSystemInit: (tools) => {
             console.log(
-            `Claude Agent initialized with tools: ${tools.filter((tool) => tool.indexOf("mcp_") === -1).join(", ")}`
+              `Claude Agent initialized with tools: ${tools
+                .filter((tool) => tool.indexOf("mcp_") === -1)
+                .join(", ")}`
             );
           },
         },

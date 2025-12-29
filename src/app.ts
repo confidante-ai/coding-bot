@@ -109,7 +109,9 @@ app.get("/oauth/callback", async (req: Request, res: Response) => {
  * Webhook endpoint for Linear events
  */
 
-const webhookClient = new LinearWebhookClient(process.env.LINEAR_WEBHOOK_SECRET || "");
+const webhookClient = new LinearWebhookClient(
+  process.env.LINEAR_WEBHOOK_SECRET || ""
+);
 const handler = webhookClient.createHandler();
 
 handler.on("AgentSessionEvent", async (payload) => {
@@ -125,10 +127,18 @@ app.post("/webhook", handler);
 async function handleAgentSessionEvent(
   webhook: AgentSessionEventWebhookPayload
 ): Promise<void> {
-  console.log("Looking up token for organizationId:", webhook.organizationId);
+  // log the received webhook payload for debugging purposes with the current timestamp
+  console.log(
+    `Received AgentSessionEvent webhook at ${new Date().toISOString()}:`,
+    JSON.stringify(webhook, null, 2)
+  );
+
   const token = await getOAuthToken(webhook.organizationId);
   if (!token) {
-    console.error("Linear OAuth token not found for organizationId:", webhook.organizationId);
+    console.error(
+      "Linear OAuth token not found for organizationId:",
+      webhook.organizationId
+    );
     return;
   }
 
