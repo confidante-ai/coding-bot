@@ -142,7 +142,12 @@ const webhookClient = new LinearWebhookClient(
 const handler = webhookClient.createHandler();
 
 handler.on("AgentSessionEvent", (payload) => {
-  console.log("Handling AgentSessionEvent webhook");
+  // log the received webhook payload for debugging purposes with the current timestamp
+  console.log(`Received AgentSessionEvent webhook at ${new Date().toISOString()}`);
+
+  // console dir the payload for inspection but limit depth to top level only and don't include the promptContext key
+  const { promptContext, ...payloadWithoutPromptContext } = payload as AgentSessionEventWebhookPayload & { promptContext?: unknown };
+  console.dir(payloadWithoutPromptContext, { depth: 1 });
 
   // Deduplicate by webhookId to prevent processing Linear retries
   // webhookId is present at runtime but not in the SDK type definitions
@@ -171,12 +176,6 @@ app.post("/webhook", handler);
 async function handleAgentSessionEvent(
   webhook: AgentSessionEventWebhookPayload
 ): Promise<void> {
-  // log the received webhook payload for debugging purposes with the current timestamp
-  console.log(
-    `Received AgentSessionEvent webhook at ${new Date().toISOString()}:`,
-    JSON.stringify(webhook, null, 2)
-  );
-
   const token = await getOAuthToken(webhook.organizationId);
   if (!token) {
     console.error(

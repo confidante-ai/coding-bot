@@ -6,7 +6,7 @@ import {
   getRepoPaths,
   setupEnvironment,
 } from "../workflow/index.js";
-import { checkCapabilitiesPrompt, questionPrompt } from "./prompt.js";
+import { implementationPrompt, questionPrompt } from "./prompt.js";
 import type { AgentSessionEventWebhookPayload } from "@linear/sdk/webhooks";
 import type { InteractionType } from "../session/sessionRegistry.js";
 
@@ -194,7 +194,7 @@ export class AgentClient {
       await setupEnvironment({ cwd: worktree.worktreePath });
       console.log(`Environment set up at path: ${worktree.worktreePath}`);
 
-      const userPrompt = checkCapabilitiesPrompt();
+      const userPrompt = implementationPrompt(ticketId, worktree.worktreePath);
       console.log(userPrompt);
 
       const result = await executePrompt(userPrompt, {
