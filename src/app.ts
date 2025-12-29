@@ -17,20 +17,34 @@ import {
 
 /**
  * Determine the interaction type from the webhook payload.
- * Questions have previousComments or a comment, while issue assignments do not.
+ *
+ * Issue assignments have a system-generated comment like:
+ * "This thread is for an agent session with {agentName}."
+ *
+ * Questions are user-written comments or replies in existing threads.
  */
 function getInteractionType(
   payload: AgentSessionEventWebhookPayload
 ): InteractionType {
-  // If previousComments exists, this is a question in a thread
+  // If previousComments exists with content, this is a question in an existing thread
   if (payload.previousComments && payload.previousComments.length > 0) {
     return "question";
   }
-  // If there's a comment but no previous comments, check if it's a direct question
-  if (payload.agentSession.comment) {
-    return "question";
+
+  // Check if the comment is system-generated (delegation) vs user-written
+  const commentBody = payload.agentSession.comment?.body;
+  if (commentBody) {
+    // System-generated comments for delegation follow this pattern
+    const isDelegationComment =
+      /^This thread is for an agent session with .+\.$/.test(commentBody);
+
+    if (!isDelegationComment) {
+      // User wrote a custom comment - treat as question
+      return "question";
+    }
   }
-  // Default to issue assignment
+
+  // Either no comment, or system-generated delegation comment
   return "issue_assignment";
 }
 
