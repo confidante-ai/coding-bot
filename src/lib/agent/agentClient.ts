@@ -24,7 +24,7 @@ export interface PreviousComment {
 export interface AgentCallbacks {
   onText: (text: string) => Promise<void> | void;
   onToolUse: (toolName: string, input: unknown) => Promise<void> | void;
-  onSystemInit: (tools: string[]) => Promise<void> | void;
+  onSystemInit: (tools: string[], agents?: string[]) => Promise<void> | void;
 }
 
 /**
@@ -109,7 +109,7 @@ export async function executePrompt(
 
       case "system":
         if (message.subtype === "init") {
-          await callbacks.onSystemInit(message.tools);
+          await callbacks.onSystemInit(message.tools, message.agents);
         }
         break;
     }
@@ -208,12 +208,15 @@ export class AgentClient {
             JSON.stringify(input, null, 2)
           );
         },
-        onSystemInit: (tools) => {
+        onSystemInit: (tools, agents) => {
           console.log(
             `Claude Agent initialized with tools: ${tools
               .filter((tool) => tool.indexOf("mcp_") === -1)
               .join(", ")}`
           );
+          if (agents) {
+            console.log(`Claude Agent initialized with agents: ${agents.join(", ")}`);
+          }
         },
       });
 
