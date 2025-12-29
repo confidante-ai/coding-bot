@@ -15,15 +15,16 @@ import {
   type InteractionType,
 } from "./lib/session/sessionRegistry.js";
 
-// Webhook deduplication cache to prevent processing Linear retries
-const processedWebhooks = new Map<string, number>();
-const WEBHOOK_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+// Session deduplication cache to prevent processing Linear webhook retries
+// Keyed by agentSession.id since webhookId is a static endpoint identifier
+const processedSessions = new Map<string, number>();
+const SESSION_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-function cleanupWebhookCache() {
+function cleanupSessionCache() {
   const now = Date.now();
-  for (const [id, timestamp] of processedWebhooks) {
-    if (now - timestamp > WEBHOOK_CACHE_TTL_MS) {
-      processedWebhooks.delete(id);
+  for (const [id, timestamp] of processedSessions) {
+    if (now - timestamp > SESSION_CACHE_TTL_MS) {
+      processedSessions.delete(id);
     }
   }
 }
@@ -149,17 +150,17 @@ handler.on("AgentSessionEvent", (payload) => {
   const { promptContext, ...payloadWithoutPromptContext } = payload as AgentSessionEventWebhookPayload & { promptContext?: unknown };
   console.dir(payloadWithoutPromptContext, { depth: 1 });
 
-  // Deduplicate by webhookId to prevent processing Linear retries
-  // webhookId is present at runtime but not in the SDK type definitions
-  const webhookId = (payload as unknown as { webhookId?: string }).webhookId;
-  if (webhookId && processedWebhooks.has(webhookId)) {
-    console.log(`Skipping duplicate webhook: ${webhookId}`);
+  // Deduplicate by session ID to prevent processing Linear retries
+  // webhookId is a static webhook endpoint identifier, not unique per event
+  const sessionId = payload.agentSession?.id;
+  if (sessionId && processedSessions.has(sessionId)) {
+    console.log(`Skipping duplicate webhook for session: ${sessionId}`);
     return;
   }
 
-  if (webhookId) {
-    processedWebhooks.set(webhookId, Date.now());
-    cleanupWebhookCache();
+  if (sessionId) {
+    processedSessions.set(sessionId, Date.now());
+    cleanupSessionCache();
   }
 
   // Process asynchronously - respond immediately to Linear
