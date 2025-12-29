@@ -15,6 +15,19 @@ import {
   type InteractionType,
 } from "./lib/session/sessionRegistry.js";
 
+// Webhook deduplication cache to prevent processing Linear retries
+const processedWebhooks = new Map<string, number>();
+const WEBHOOK_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+function cleanupWebhookCache() {
+  const now = Date.now();
+  for (const [id, timestamp] of processedWebhooks) {
+    if (now - timestamp > WEBHOOK_CACHE_TTL_MS) {
+      processedWebhooks.delete(id);
+    }
+  }
+}
+
 /**
  * Determine the interaction type from the webhook payload.
  *
@@ -128,9 +141,26 @@ const webhookClient = new LinearWebhookClient(
 );
 const handler = webhookClient.createHandler();
 
-handler.on("AgentSessionEvent", async (payload) => {
+handler.on("AgentSessionEvent", (payload) => {
   console.log("Handling AgentSessionEvent webhook");
-  await handleAgentSessionEvent(payload);
+
+  // Deduplicate by webhookId to prevent processing Linear retries
+  // webhookId is present at runtime but not in the SDK type definitions
+  const webhookId = (payload as unknown as { webhookId?: string }).webhookId;
+  if (webhookId && processedWebhooks.has(webhookId)) {
+    console.log(`Skipping duplicate webhook: ${webhookId}`);
+    return;
+  }
+
+  if (webhookId) {
+    processedWebhooks.set(webhookId, Date.now());
+    cleanupWebhookCache();
+  }
+
+  // Process asynchronously - respond immediately to Linear
+  handleAgentSessionEvent(payload).catch((error) => {
+    console.error("Error processing webhook:", error);
+  });
 });
 
 app.post("/webhook", handler);
@@ -163,26 +193,39 @@ async function handleAgentSessionEvent(
 
   const sessionId = webhook.agentSession.id;
   const ticketId = webhook.agentSession.issue?.identifier || "unknown";
-  const isExistingSession = sessionRegistry.has(sessionId);
 
-  if (isExistingSession) {
+  // Check if this session is already being processed
+  if (sessionRegistry.has(sessionId)) {
     console.log(
-      `Webhook received for existing session: ${sessionId} (ticket: ${ticketId})`
+      `Session already being processed: ${sessionId} (ticket: ${ticketId}) - skipping`
     );
-  } else {
-    console.log(
-      `Webhook received for new session: ${sessionId} (ticket: ${ticketId})`
-    );
+    return;
   }
 
   const interactionType = getInteractionType(webhook);
-  const agentClient = new AgentClient(token);
 
-  await agentClient.handleUserPrompt(
-    webhook.agentSession,
+  // Register the session BEFORE processing to prevent duplicate handling
+  sessionRegistry.register({
+    sessionId,
+    ticketId,
+    abortController: new AbortController(),
+    startedAt: new Date(),
     interactionType,
-    (webhook.previousComments as PreviousComment[] | undefined) ?? undefined // Pass for context in questions
-  );
+  });
+
+  console.log(`Processing new session: ${sessionId} (ticket: ${ticketId})`);
+
+  try {
+    const agentClient = new AgentClient(token);
+    await agentClient.handleUserPrompt(
+      webhook.agentSession,
+      interactionType,
+      (webhook.previousComments as PreviousComment[] | undefined) ?? undefined // Pass for context in questions
+    );
+  } finally {
+    // Always unregister when done (success or failure)
+    sessionRegistry.unregister(sessionId);
+  }
 }
 
 export default app;
