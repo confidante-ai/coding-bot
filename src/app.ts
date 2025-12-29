@@ -10,7 +10,10 @@ import {
   getOAuthToken,
 } from "./lib/oauth.js";
 import { AgentClient, PreviousComment } from "./lib/agent/agentClient.js";
-import { type InteractionType } from "./lib/session/sessionRegistry.js";
+import {
+  sessionRegistry,
+  type InteractionType,
+} from "./lib/session/sessionRegistry.js";
 
 /**
  * Determine the interaction type from the webhook payload.
@@ -64,6 +67,24 @@ app.get("/status", (_req: Request, res: Response) => {
 });
 
 /**
+ * Active sessions endpoint
+ */
+app.get("/sessions", (_req: Request, res: Response) => {
+  const sessions = sessionRegistry.getAll().map((session) => ({
+    sessionId: session.sessionId,
+    ticketId: session.ticketId,
+    interactionType: session.interactionType,
+    startedAt: session.startedAt,
+    worktreePath: session.worktreePath,
+  }));
+
+  res.json({
+    count: sessions.length,
+    sessions,
+  });
+});
+
+/**
  * Root endpoint
  */
 app.get("/", (_req: Request, res: Response) => {
@@ -113,6 +134,20 @@ async function handleAgentSessionEvent(
   if (!webhook.agentSession) {
     console.error("No agent session found in webhook payload");
     return;
+  }
+
+  const sessionId = webhook.agentSession.id;
+  const ticketId = webhook.agentSession.issue?.identifier || "unknown";
+  const isExistingSession = sessionRegistry.has(sessionId);
+
+  if (isExistingSession) {
+    console.log(
+      `Webhook received for existing session: ${sessionId} (ticket: ${ticketId})`
+    );
+  } else {
+    console.log(
+      `Webhook received for new session: ${sessionId} (ticket: ${ticketId})`
+    );
   }
 
   const interactionType = getInteractionType(webhook);
